@@ -543,7 +543,7 @@ int main(){
 
 
     // initialize statistics reporting and buffer drawing
-    float worst_rho_ratio = 1;
+    float worst_avg_rho_error_pct = 0;
     float t = 0, last_t = 0;
     struct timespec last_reported = now;
     clock_gettime(CLOCK_MONOTONIC, &last_reported);
@@ -643,15 +643,14 @@ int main(){
 
         #pragma omp single
         {    
-            // record the worst rho ratio in a single frame as current_rho_ratio
-            // compare current_rho_ratio to worst_rho_ratio, which is the worst rho ratio out of ALL frames
+            // record the average rho ratio in a single frame as avg_rho_ratio
+            // compare avg_rho_ratio to worst_avg_rho_error_pct, which is the worst average rho ratio out of ALL frames
             // this is a critical statistic that shows to what degree the incompressibility constraint is being violated
-            float current_rho_ratio = 1;
-            for(int i = 0; i < n_fluid; i++){
-                float rho_ratio = fluid->rho[i]/RHO_0;
-                if(fabs(rho_ratio-1) > fabs(current_rho_ratio-1)) current_rho_ratio = rho_ratio;
-            }
-            if(current_rho_ratio > worst_rho_ratio) worst_rho_ratio = current_rho_ratio;
+            float temp = 0, avg_rho_error, avg_rho_error_pct;
+            for(int i = 0; i < fluid->count; i++) temp += fluid->rho[i];
+            avg_rho_error = temp / fluid->count - RHO_0;
+            avg_rho_error_pct = avg_rho_error/RHO_0*100;
+            if(avg_rho_error_pct > worst_avg_rho_error_pct) worst_avg_rho_error_pct = avg_rho_error;
 
             
             // report frame rate and other statistics
@@ -662,8 +661,8 @@ int main(){
 
                 printf("t=%.2f, ", t);
                 printf("ticks/s = %d, ", tps);
-                printf("worst rho_ratio = %.4f, ", worst_rho_ratio);
-                printf("current rho_ratio = %.4f, ", current_rho_ratio);
+                printf("worst avg rho error = %.3f\%%, ", worst_avg_rho_error_pct);
+                printf("current avg rho error = %.3f\%%, ", avg_rho_error_pct);
                 printf("\n");
 
                 last_t = t;
