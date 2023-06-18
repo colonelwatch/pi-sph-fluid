@@ -289,7 +289,7 @@ int in_initial_shape(float x, float y){
 //  rather uses some number high enough that the density doesn't vary by too many percents. That's also how I did it   
 //  here because I saw that using the true speed caused instability. See Monaghan 1992 or Monaghan 2005.
 void calculate_particle_pressure(struct particles *particles){
-    #pragma omp for nowait
+    #pragma omp for
     for(int i = 0; i < particles->count; i++){
         const float B = C*C*RHO_0/7;
         float rho_ratio = particles->rho[i]/RHO_0;
@@ -360,7 +360,7 @@ void add_viscosity_acceleration(float *du_dt, float *dv_dt, struct particles *a,
 void add_compression_effect(float *drho_dt, struct particles *a, struct particles *b, 
     struct neighbors_context *context_b)
 {
-    #pragma omp for nowait
+    #pragma omp for
     for(int idx_a = 0; idx_a < a->count; idx_a++){
         struct particle a_i = particle_at(a, idx_a);
 
@@ -381,17 +381,6 @@ void add_compression_effect(float *drho_dt, struct particles *a, struct particle
         float drho_dt_i = sph_divergence(u_ab, v_ab, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
         drho_dt[idx_a] += drho_dt_i;
     }
-}
-
-void add_particle_derivs(float* du_dt, float *dv_dt, float *drho_dt, struct particles *a, struct particles *b, 
-    struct neighbors_context *context_b)
-{
-    if(du_dt != NULL && dv_dt != NULL){
-        add_pressure_acceleration(du_dt, dv_dt, a, b, context_b);
-        add_viscosity_acceleration(du_dt, dv_dt, a, b, context_b);
-    }
-    if(drho_dt != NULL)
-        add_compression_effect(drho_dt, a, b, context_b);
 }
 
 
@@ -674,12 +663,13 @@ int main(){
         // predictor step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
         calculate_particle_pressure(fluid);
         calculate_particle_pressure(boundary);
-        #pragma omp barrier
-        add_particle_derivs(du_dt_pred, dv_dt_pred, drho_dt_pred, fluid, fluid, ctx_fluid);
-        #pragma omp barrier
-        add_particle_derivs(du_dt_pred, dv_dt_pred, drho_dt_pred, fluid, boundary, ctx_boundary);
-        add_particle_derivs(NULL, NULL, drho_dt_boundary_pred, boundary, fluid, ctx_fluid);
-        #pragma omp barrier
+        add_pressure_acceleration(du_dt_pred, dv_dt_pred, fluid, fluid, ctx_fluid);
+        add_pressure_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_boundary);
+        add_viscosity_acceleration(du_dt_pred, dv_dt_pred, fluid, fluid, ctx_fluid);
+        add_viscosity_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_boundary);
+        add_compression_effect(drho_dt_pred, fluid, fluid, ctx_fluid);
+        add_compression_effect(drho_dt_pred, fluid, boundary, ctx_boundary);
+        add_compression_effect(drho_dt_boundary_pred, boundary, fluid, ctx_fluid);
 
         #pragma omp single
         {
@@ -709,12 +699,13 @@ int main(){
         // corrector step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
         calculate_particle_pressure(fluid_pred);
         calculate_particle_pressure(boundary_pred);
-        #pragma omp barrier
-        add_particle_derivs(du_dt_corr, dv_dt_corr, drho_dt_corr, fluid_pred, fluid_pred, ctx_fluid);
-        #pragma omp barrier
-        add_particle_derivs(du_dt_corr, dv_dt_corr, drho_dt_corr, fluid_pred, boundary_pred, ctx_boundary);
-        add_particle_derivs(NULL, NULL, drho_dt_boundary_corr, boundary_pred, fluid_pred, ctx_fluid);
-        #pragma omp barrier
+        add_pressure_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, fluid_pred, ctx_fluid);
+        add_pressure_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_boundary);
+        add_viscosity_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, fluid_pred, ctx_fluid);
+        add_viscosity_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_boundary);
+        add_compression_effect(drho_dt_corr, fluid_pred, fluid_pred, ctx_fluid);
+        add_compression_effect(drho_dt_corr, fluid_pred, boundary_pred, ctx_boundary);
+        add_compression_effect(drho_dt_boundary_corr, boundary_pred, fluid_pred, ctx_fluid);
 
         #pragma omp single
         {
