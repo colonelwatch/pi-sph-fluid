@@ -247,7 +247,10 @@ void calculate_particle_pressure(struct particles *particles){
 
 // Exact implementation of Monaghan 1992 to the best of my ability with the exception of leaving artificial viscosity 
 //  on all the time
-float2 sph_gradient(float *quantity, struct particles *a, struct particles *b, int idx_a, int *idxs_b, int n_idxs_b){
+enum leading_factor { MASS, VOLUME }; // fundamental SPH approx uses volume, but most derived invocations use mass
+float2 sph_gradient(float *quantity, struct particles *a, struct particles *b, int idx_a, int *idxs_b, int n_idxs_b, 
+    enum leading_factor leading_factor)
+{
     float x_a = a->x[idx_a], y_a = a->y[idx_a];
     
     float2 grad_quantity = (float2){ .x = 0, .y = 0 };
@@ -255,17 +258,19 @@ float2 sph_gradient(float *quantity, struct particles *a, struct particles *b, i
         int j = idxs_b[k]; // j is traditionally the index of the neighbor particle
 
         float x_b = b->x[j], y_b = b->y[j];
+        float rho_b = b->rho[j];
 
         float2 grad_a_W_ab_ij = grad_a_W_ab(x_a, y_a, x_b, y_b);
+        float leading_factor_j = (leading_factor == MASS)? M : M/rho_b;
 
-        grad_quantity.x += M*quantity[k]*grad_a_W_ab_ij.x;
-        grad_quantity.y += M*quantity[k]*grad_a_W_ab_ij.y;
+        grad_quantity.x += leading_factor_j*quantity[k]*grad_a_W_ab_ij.x;
+        grad_quantity.y += leading_factor_j*quantity[k]*grad_a_W_ab_ij.y;
     }
 
     return grad_quantity;
 }
 float sph_divergence(float *quantity_x, float *quantity_y, struct particles *a, struct particles *b, int idx_a, 
-    int *idxs_b, int n_idxs_b)
+    int *idxs_b, int n_idxs_b, enum leading_factor leading_factor)
 {
     float x_a = a->x[idx_a], y_a = a->y[idx_a];
 
@@ -274,12 +279,14 @@ float sph_divergence(float *quantity_x, float *quantity_y, struct particles *a, 
         int j = idxs_b[k];
 
         float x_b = b->x[j], y_b = b->y[j];
+        float rho_b = b->rho[j];
 
         float2 grad_a_W_ab_ij = grad_a_W_ab(x_a, y_a, x_b, y_b);
+        float leading_factor_j = (leading_factor == MASS)? M : M/rho_b;
 
         float quantity_dot_grad = quantity_x[k]*grad_a_W_ab_ij.x + quantity_y[k]*grad_a_W_ab_ij.y;
 
-        div_quantity += M*quantity_dot_grad;
+        div_quantity += leading_factor_j*quantity_dot_grad;
     }
 
     return div_quantity;
@@ -306,7 +313,7 @@ void add_particle_derivs(float* du_dt, float *dv_dt, float *drho_dt, struct part
             }
 
             // compute the acceleration due to pressure using the SPH gradient
-            float2 pressure_grad_i = sph_gradient(pressure_i, a, b, idx_a, neighbors_idxs, n_neighbors);
+            float2 pressure_grad_i = sph_gradient(pressure_i, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
             du_dt[idx_a] += pressure_grad_i.x;
             dv_dt[idx_a] += pressure_grad_i.y;
 
@@ -328,7 +335,7 @@ void add_particle_derivs(float* du_dt, float *dv_dt, float *drho_dt, struct part
             }
 
             // compute the acceleration due to viscosity using the SPH gradient
-            float2 viscosity_grad_i = sph_gradient(viscosity_i, a, b, idx_a, neighbors_idxs, n_neighbors);
+            float2 viscosity_grad_i = sph_gradient(viscosity_i, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
             du_dt[idx_a] += viscosity_grad_i.x;
             dv_dt[idx_a] += viscosity_grad_i.y;
         }
@@ -343,7 +350,7 @@ void add_particle_derivs(float* du_dt, float *dv_dt, float *drho_dt, struct part
             }
 
             // compute the change in density using the SPH divergence
-            float drho_dt_i = sph_divergence(u_ab, v_ab, a, b, idx_a, neighbors_idxs, n_neighbors);
+            float drho_dt_i = sph_divergence(u_ab, v_ab, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
             drho_dt[idx_a] += drho_dt_i;
         }
     }
