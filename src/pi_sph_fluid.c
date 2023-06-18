@@ -276,7 +276,8 @@ float sph_divergence(float *quantity_x, float *quantity_y, struct particles *a, 
 
 
 // MAIN FUNCTIONS
-// These functions are responsible for principal parts of the fluid simulation
+// These functions are responsible for principal parts of the fluid simulation. Exact implementation of Monaghan 1992 
+//  to the best of my ability with the exception of leaving artificial viscosity on all the time
 
 // To start, arrange the SPH particles as a circle in the middle of the domain
 int in_initial_shape(float x, float y){
@@ -296,71 +297,101 @@ void calculate_particle_pressure(struct particles *particles){
     }
 }
 
-// Exact implementation of Monaghan 1992 to the best of my ability with the exception of leaving artificial viscosity 
-//  on all the time
-void add_particle_derivs(float* du_dt, float *dv_dt, float *drho_dt, struct particles *a, struct particles *b, 
+void add_pressure_acceleration(float *du_dt, float *dv_dt, struct particles *a, struct particles *b,
+    struct neighbors_context *context_b)
+{
+    #pragma omp for
+    for(int idx_a = 0; idx_a < a->count; idx_a++){
+        struct particle a_i = particle_at(a, idx_a);        
+
+        int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS];
+        int n_neighbors = find_neighbors(neighbors_idxs, a, b, idx_a, context_b);
+
+        // compute parts of the momentum-conserving pressure from neighbors
+        float pressure_i[MAX_POSSIBLE_NEIGHBORS];
+        for(int k = 0; k < n_neighbors; k++){
+            int idx_b = neighbors_idxs[k];
+            struct particle b_j = particle_at(b, idx_b);
+
+            pressure_i[k] = -( a_i.p/(a_i.rho*a_i.rho) + b_j.p/(b_j.rho*b_j.rho) );
+        }
+
+        // compute the acceleration due to pressure using the SPH gradient
+        float2 pressure_grad_i = sph_gradient(pressure_i, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
+        du_dt[idx_a] += pressure_grad_i.x;
+        dv_dt[idx_a] += pressure_grad_i.y;
+    }
+}
+
+void add_viscosity_acceleration(float *du_dt, float *dv_dt, struct particles *a, struct particles *b,
+    struct neighbors_context *context_b)
+{
+    #pragma omp for
+    for(int idx_a = 0; idx_a < a->count; idx_a++){
+        struct particle a_i = particle_at(a, idx_a);
+
+        int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS];
+        int n_neighbors = find_neighbors(neighbors_idxs, a, b, idx_a, context_b);
+
+        // compute parts of the viscosity from neighbors
+        float viscosity_i[MAX_POSSIBLE_NEIGHBORS];
+        for(int k = 0; k < n_neighbors; k++){
+            int idx_b = neighbors_idxs[k];
+            struct particle b_j = particle_at(b, idx_b);
+
+            float u_ab = a_i.u-b_j.u, v_ab = a_i.v-b_j.v;
+            float x_ab = a_i.x-b_j.x, y_ab = a_i.y-b_j.y;
+            float mean_rho = (a_i.rho+b_j.rho)/2;
+
+            float xy_dot_uv = x_ab*u_ab+y_ab*v_ab;
+            float xy_dot_xy = x_ab*x_ab+y_ab*y_ab;
+            float mu_ab = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
+
+            viscosity_i[k] = 0.01*C*mu_ab/mean_rho;
+        }
+
+        // compute the acceleration due to viscosity using the SPH gradient
+        float2 viscosity_grad_i = sph_gradient(viscosity_i, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
+        du_dt[idx_a] += viscosity_grad_i.x;
+        dv_dt[idx_a] += viscosity_grad_i.y;
+    }
+}
+
+void add_compression_effect(float *drho_dt, struct particles *a, struct particles *b, 
     struct neighbors_context *context_b)
 {
     #pragma omp for nowait
     for(int idx_a = 0; idx_a < a->count; idx_a++){
-        // holds the neighbors
+        struct particle a_i = particle_at(a, idx_a);
+
         int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS];
         int n_neighbors = find_neighbors(neighbors_idxs, a, b, idx_a, context_b);
 
-        if(du_dt && dv_dt){
-            struct particle a_i = particle_at(a, idx_a);
-            
-            // compute parts of the momentum-conserving pressure from neighbors
-            float pressure_i[MAX_POSSIBLE_NEIGHBORS];
-            for(int k = 0; k < n_neighbors; k++){
-                int idx_b = neighbors_idxs[k];
-                struct particle b_j = particle_at(b, idx_b);
+        // compute parts of the popular formulation of the continuity equation from neighbors
+        float u_ab[MAX_POSSIBLE_NEIGHBORS], v_ab[MAX_POSSIBLE_NEIGHBORS];
+        for(int k = 0; k < n_neighbors; k++){
+            int idx_b = neighbors_idxs[k];
+            struct particle b_j = particle_at(b, idx_b);
 
-                pressure_i[k] = -( a_i.p/(a_i.rho*a_i.rho) + b_j.p/(b_j.rho*b_j.rho) );
-            }
-
-            // compute the acceleration due to pressure using the SPH gradient
-            float2 pressure_grad_i = sph_gradient(pressure_i, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
-            du_dt[idx_a] += pressure_grad_i.x;
-            dv_dt[idx_a] += pressure_grad_i.y;
-
-            // compute parts of the viscosity from neighbors
-            float viscosity_i[MAX_POSSIBLE_NEIGHBORS];
-            for(int k = 0; k < n_neighbors; k++){
-                int idx_b = neighbors_idxs[k];
-                struct particle b_j = particle_at(b, idx_b);
-
-                float u_ab = a_i.u-b_j.u, v_ab = a_i.v-b_j.v;
-                float x_ab = a_i.x-b_j.x, y_ab = a_i.y-b_j.y;
-                float mean_rho = (a_i.rho+b_j.rho)/2;
-
-                float xy_dot_uv = x_ab*u_ab+y_ab*v_ab;
-                float xy_dot_xy = x_ab*x_ab+y_ab*y_ab;
-                float mu_ab = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
-
-                viscosity_i[k] = 0.01*C*mu_ab/mean_rho;
-            }
-
-            // compute the acceleration due to viscosity using the SPH gradient
-            float2 viscosity_grad_i = sph_gradient(viscosity_i, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
-            du_dt[idx_a] += viscosity_grad_i.x;
-            dv_dt[idx_a] += viscosity_grad_i.y;
+            u_ab[k] = a_i.u-b_j.u;
+            v_ab[k] = a_i.v-b_j.v;
         }
 
-        if(drho_dt){
-            // compute parts of the popular formulation of the continuity equation from neighbors
-            float u_ab[MAX_POSSIBLE_NEIGHBORS], v_ab[MAX_POSSIBLE_NEIGHBORS];
-            for(int k = 0; k < n_neighbors; k++){
-                int idx_b = neighbors_idxs[k];
-                u_ab[k] = a->u[idx_a] - b->u[idx_b];
-                v_ab[k] = a->v[idx_a] - b->v[idx_b];
-            }
-
-            // compute the change in density using the SPH divergence
-            float drho_dt_i = sph_divergence(u_ab, v_ab, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
-            drho_dt[idx_a] += drho_dt_i;
-        }
+        // compute the change in density using the SPH divergence
+        float drho_dt_i = sph_divergence(u_ab, v_ab, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
+        drho_dt[idx_a] += drho_dt_i;
     }
+}
+
+void add_particle_derivs(float* du_dt, float *dv_dt, float *drho_dt, struct particles *a, struct particles *b, 
+    struct neighbors_context *context_b)
+{
+    if(du_dt != NULL && dv_dt != NULL){
+        add_pressure_acceleration(du_dt, dv_dt, a, b, context_b);
+        add_viscosity_acceleration(du_dt, dv_dt, a, b, context_b);
+    }
+    if(drho_dt != NULL)
+        add_compression_effect(drho_dt, a, b, context_b);
 }
 
 
