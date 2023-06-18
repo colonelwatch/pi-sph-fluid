@@ -29,6 +29,12 @@ struct particles{
     float *p; // pressure, which is only a function of rho
 };
 
+struct particle{ // struct representing a single particle, which should serve as a function input or output
+    float x, y, rho;
+    float u, v;
+    float p; // pressure, which is only a function of rho
+};
+
 // Helper function for allocating all the arrays of the particles struct using a malloc-like syntax
 struct particles* alloc_particles(int n_particles){
     struct particles *particles = (struct particles*)malloc(sizeof(struct particles));
@@ -43,6 +49,20 @@ struct particles* alloc_particles(int n_particles){
 
     return particles;
 }
+
+// Helper function for pulling an individual particle out of the struct of arrays
+struct particle particle_at(struct particles *particles, int idx){
+    return (struct particle){
+        .x = particles->x[idx], .y = particles->y[idx], .rho = particles->rho[idx],
+        .u = particles->u[idx], .v = particles->v[idx],
+        .p = particles->p[idx]
+    };
+}
+
+
+// VECTOR RETURN-ELEMENT
+// Helper struct for returning two floats from vector-valued functions
+typedef struct { float x, y; } float2;
 
 
 // THE KERNEL AND ITS DERIVATIVE
@@ -73,6 +93,16 @@ float dq_dx_a(float x_a, float y_a, float x_b, float y_b){
 
 float dq_dy_a(float x_a, float y_a, float x_b, float y_b){
     return (y_a-y_b)/euclid_dist(x_a, y_a, x_b, y_b)/H;
+}
+
+float2 grad_a_W_ab(float x_a, float y_a, float x_b, float y_b){
+    float q = euclid_dist(x_a, y_a, x_b, y_b)/H;
+
+    float dW_dq_val = dW_dq(q);
+    float dq_dx_a_val = dq_dx_a(x_a, y_a, x_b, y_b);
+    float dq_dy_a_val = dq_dy_a(x_a, y_a, x_b, y_b);
+
+    return (float2){ .x = dW_dq_val*dq_dx_a_val, .y = dW_dq_val*dq_dy_a_val };
 }
 
 
@@ -216,7 +246,44 @@ void calculate_particle_pressure(struct particles *particles){
 }
 
 // Exact implementation of Monaghan 1992 to the best of my ability with the exception of leaving artificial viscosity 
-//  on all the time and using alpha=0.02 instead of alpha=0.01 (staves off instability)
+//  on all the time
+float2 sph_gradient(float *quantity, struct particles *a, struct particles *b, int idx_a, int *idxs_b, int n_idxs_b){
+    float x_a = a->x[idx_a], y_a = a->y[idx_a];
+    
+    float2 grad_quantity = (float2){ .x = 0, .y = 0 };
+    for(int k = 0; k < n_idxs_b; k++){
+        int j = idxs_b[k]; // j is traditionally the index of the neighbor particle
+
+        float x_b = b->x[j], y_b = b->y[j];
+
+        float2 grad_a_W_ab_ij = grad_a_W_ab(x_a, y_a, x_b, y_b);
+
+        grad_quantity.x += M*quantity[k]*grad_a_W_ab_ij.x;
+        grad_quantity.y += M*quantity[k]*grad_a_W_ab_ij.y;
+    }
+
+    return grad_quantity;
+}
+float sph_divergence(float *quantity_x, float *quantity_y, struct particles *a, struct particles *b, int idx_a, 
+    int *idxs_b, int n_idxs_b)
+{
+    float x_a = a->x[idx_a], y_a = a->y[idx_a];
+
+    float div_quantity = 0;
+    for(int k = 0; k < n_idxs_b; k++){
+        int j = idxs_b[k];
+
+        float x_b = b->x[j], y_b = b->y[j];
+
+        float2 grad_a_W_ab_ij = grad_a_W_ab(x_a, y_a, x_b, y_b);
+
+        float quantity_dot_grad = quantity_x[k]*grad_a_W_ab_ij.x + quantity_y[k]*grad_a_W_ab_ij.y;
+
+        div_quantity += M*quantity_dot_grad;
+    }
+
+    return div_quantity;
+}
 void add_particle_derivs(float* du_dt, float *dv_dt, float *drho_dt, struct particles *a, struct particles *b, 
     struct neighbors_context *context_b)
 {
@@ -224,68 +291,60 @@ void add_particle_derivs(float* du_dt, float *dv_dt, float *drho_dt, struct part
     for(int idx_a = 0; idx_a < a->count; idx_a++){
         // holds the neighbors
         int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS];
-        float dW_dx_a[MAX_POSSIBLE_NEIGHBORS], dW_dy_a[MAX_POSSIBLE_NEIGHBORS];
-        
         int n_neighbors = find_neighbors(neighbors_idxs, a, b, idx_a, context_b);
-        
-        for(int k = 0; k < n_neighbors; k++){
-            int idx_b = neighbors_idxs[k];
-            
-            float q = euclid_dist(a->x[idx_a], a->y[idx_a], b->x[idx_b], b->y[idx_b])/H;
-            float dW_dq_i = dW_dq(q);
-            dW_dx_a[k] = dW_dq_i*dq_dx_a(a->x[idx_a], a->y[idx_a], b->x[idx_b], b->y[idx_b]);
-            dW_dy_a[k] = dW_dq_i*dq_dy_a(a->x[idx_a], a->y[idx_a], b->x[idx_b], b->y[idx_b]);
-        }
-        
+
         if(du_dt && dv_dt){
-            float du_dt_terms[MAX_POSSIBLE_NEIGHBORS], dv_dt_terms[MAX_POSSIBLE_NEIGHBORS];
+            struct particle a_i = particle_at(a, idx_a);
+            
+            // compute parts of the momentum-conserving pressure from neighbors
+            float pressure_i[MAX_POSSIBLE_NEIGHBORS];
             for(int k = 0; k < n_neighbors; k++){
                 int idx_b = neighbors_idxs[k];
+                struct particle b_j = particle_at(b, idx_b);
 
-                float pressure_a = a->p[idx_a]/a->rho[idx_a]/a->rho[idx_a],
-                      pressure_b = b->p[idx_b]/b->rho[idx_b]/b->rho[idx_b];
-                
-                float visocity;
-                float u_ab = a->u[idx_a] - b->u[idx_b],
-                      v_ab = a->v[idx_a] - b->v[idx_b];
-                float x_ab = a->x[idx_a] - b->x[idx_b],
-                      y_ab = a->y[idx_a] - b->y[idx_b];
-                float uv_dot_xy = u_ab*x_ab+v_ab*y_ab;
-                float mu_ab = H*uv_dot_xy/(x_ab*x_ab+y_ab*y_ab+0.01f*H*H);
-                visocity = -0.01f*C*mu_ab/((a->rho[idx_a] + b->rho[idx_b])/2);
-
-                du_dt_terms[k] = -(pressure_a+pressure_b+visocity)*dW_dx_a[k]*M;
-                dv_dt_terms[k] = -(pressure_a+pressure_b+visocity)*dW_dy_a[k]*M;
+                pressure_i[k] = -( a_i.p/(a_i.rho*a_i.rho) + b_j.p/(b_j.rho*b_j.rho) );
             }
 
-            // by implementing the iteration over the neighbors into a calculation loop and an accumulation loop, both 
-            // can be automatically vectorized by the compiler
-            float du_dt_sum = 0, dv_dt_sum = 0;
+            // compute the acceleration due to pressure using the SPH gradient
+            float2 pressure_grad_i = sph_gradient(pressure_i, a, b, idx_a, neighbors_idxs, n_neighbors);
+            du_dt[idx_a] += pressure_grad_i.x;
+            dv_dt[idx_a] += pressure_grad_i.y;
+
+            // compute parts of the viscosity from neighbors
+            float viscosity_i[MAX_POSSIBLE_NEIGHBORS];
             for(int k = 0; k < n_neighbors; k++){
-                du_dt_sum += du_dt_terms[k];
-                dv_dt_sum += dv_dt_terms[k];
+                int idx_b = neighbors_idxs[k];
+                struct particle b_j = particle_at(b, idx_b);
+
+                float u_ab = a_i.u-b_j.u, v_ab = a_i.v-b_j.v;
+                float x_ab = a_i.x-b_j.x, y_ab = a_i.y-b_j.y;
+                float mean_rho = (a_i.rho+b_j.rho)/2;
+
+                float xy_dot_uv = x_ab*u_ab+y_ab*v_ab;
+                float xy_dot_xy = x_ab*x_ab+y_ab*y_ab;
+                float mu_ab = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
+
+                viscosity_i[k] = 0.01*C*mu_ab/mean_rho;
             }
 
-            // du_dt and dv_dt are meant to be accumulators, so we can't use assignment (=) here
-            du_dt[idx_a] += du_dt_sum;
-            dv_dt[idx_a] += dv_dt_sum;
+            // compute the acceleration due to viscosity using the SPH gradient
+            float2 viscosity_grad_i = sph_gradient(viscosity_i, a, b, idx_a, neighbors_idxs, n_neighbors);
+            du_dt[idx_a] += viscosity_grad_i.x;
+            dv_dt[idx_a] += viscosity_grad_i.y;
         }
 
         if(drho_dt){
-            float drho_dt_terms[MAX_POSSIBLE_NEIGHBORS];
+            // compute parts of the popular formulation of the continuity equation from neighbors
+            float u_ab[MAX_POSSIBLE_NEIGHBORS], v_ab[MAX_POSSIBLE_NEIGHBORS];
             for(int k = 0; k < n_neighbors; k++){
                 int idx_b = neighbors_idxs[k];
-                float u_ab = a->u[idx_a] - b->u[idx_b],
-                      v_ab = a->v[idx_a] - b->v[idx_b];
-                drho_dt_terms[k] = (u_ab*dW_dx_a[k]+v_ab*dW_dy_a[k])*M;
+                u_ab[k] = a->u[idx_a] - b->u[idx_b];
+                v_ab[k] = a->v[idx_a] - b->v[idx_b];
             }
 
-            // same reasoning as above
-            float drho_dt_sum = 0;
-            for(int k = 0; k < n_neighbors; k++)
-                drho_dt_sum += drho_dt_terms[k];
-            
-            drho_dt[idx_a] += drho_dt_sum;
+            // compute the change in density using the SPH divergence
+            float drho_dt_i = sph_divergence(u_ab, v_ab, a, b, idx_a, neighbors_idxs, n_neighbors);
+            drho_dt[idx_a] += drho_dt_i;
         }
     }
 }
