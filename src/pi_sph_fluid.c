@@ -355,47 +355,74 @@ void calculate_particle_pressure(struct particles *particles){
     }
 }
 
-void add_pressure_acceleration(float *du_dt, float *dv_dt, struct particles *a, struct particles *b,
-    struct neighbors_context *context_b)
+void add_pressure_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct particles *fluid, 
+    struct particles *boundary, struct neighbors_context *ctx_fluid, struct neighbors_context *ctx_boundary)
 {
+    int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+    float pressure_i[MAX_POSSIBLE_NEIGHBORS];
+    float2 pressure_grad_i;
+    
     #pragma omp for
-    for(int idx_a = 0; idx_a < a->count; idx_a++){
-        struct particle a_i = particle_at(a, idx_a);        
+    for(int idx_a = 0; idx_a < fluid->count; idx_a++){
+        struct particle a_i = particle_at(fluid, idx_a);       
+         
+        float du_dt_fluid_i = 0, dv_dt_fluid_i = 0;
 
-        int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS];
-        int n_neighbors = find_neighbors(neighbors_idxs, a, b, idx_a, context_b);
+        // fluid contribution to pressure acceleration of fluid
+        n_neighbors = find_neighbors(neighbors_idxs, fluid, fluid, idx_a, ctx_fluid);
 
         // compute parts of the momentum-conserving pressure from neighbors
-        float pressure_i[MAX_POSSIBLE_NEIGHBORS];
         for(int k = 0; k < n_neighbors; k++){
             int idx_b = neighbors_idxs[k];
-            struct particle b_j = particle_at(b, idx_b);
+            struct particle b_j = particle_at(fluid, idx_b);
 
             pressure_i[k] = -( a_i.p/(a_i.rho*a_i.rho) + b_j.p/(b_j.rho*b_j.rho) );
         }
 
         // compute the acceleration due to pressure using the SPH gradient
-        float2 pressure_grad_i = sph_gradient(pressure_i, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
-        du_dt[idx_a] += pressure_grad_i.x;
-        dv_dt[idx_a] += pressure_grad_i.y;
+        pressure_grad_i = sph_gradient(pressure_i, fluid, fluid, idx_a, neighbors_idxs, n_neighbors, MASS);
+        du_dt_fluid_i += pressure_grad_i.x;
+        dv_dt_fluid_i += pressure_grad_i.y;
+
+        // boundary contribution to pressure acceleration of fluid
+        n_neighbors = find_neighbors(neighbors_idxs, fluid, boundary, idx_a, ctx_boundary);
+
+        for(int k = 0; k < n_neighbors; k++){
+            int idx_b = neighbors_idxs[k];
+            struct particle b_j = particle_at(boundary, idx_b);
+
+            pressure_i[k] = -( a_i.p/(a_i.rho*a_i.rho) + b_j.p/(b_j.rho*b_j.rho) );
+        }
+
+        pressure_grad_i = sph_gradient(pressure_i, fluid, boundary, idx_a, neighbors_idxs, n_neighbors, MASS);
+        du_dt_fluid_i += pressure_grad_i.x;
+        dv_dt_fluid_i += pressure_grad_i.y;
+
+        du_dt_fluid[idx_a] += du_dt_fluid_i;
+        dv_dt_fluid[idx_a] += dv_dt_fluid_i;
     }
 }
 
-void add_viscosity_acceleration(float *du_dt, float *dv_dt, struct particles *a, struct particles *b,
-    struct neighbors_context *context_b)
+void add_viscosity_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct particles *fluid, 
+    struct particles *boundary, struct neighbors_context *ctx_fluid, struct neighbors_context *ctx_boundary)
 {
+    int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+    float viscosity_i[MAX_POSSIBLE_NEIGHBORS];
+    float2 viscosity_grad_i;
+    
     #pragma omp for
-    for(int idx_a = 0; idx_a < a->count; idx_a++){
-        struct particle a_i = particle_at(a, idx_a);
+    for(int idx_a = 0; idx_a < fluid->count; idx_a++){
+        struct particle a_i = particle_at(fluid, idx_a);       
+         
+        float du_dt_fluid_i = 0, dv_dt_fluid_i = 0;
 
-        int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS];
-        int n_neighbors = find_neighbors(neighbors_idxs, a, b, idx_a, context_b);
+        // fluid contribution to pressure acceleration of fluid
+        n_neighbors = find_neighbors(neighbors_idxs, fluid, fluid, idx_a, ctx_fluid);
 
-        // compute parts of the viscosity from neighbors
-        float viscosity_i[MAX_POSSIBLE_NEIGHBORS];
+        // compute parts of the momentum-conserving pressure from neighbors
         for(int k = 0; k < n_neighbors; k++){
             int idx_b = neighbors_idxs[k];
-            struct particle b_j = particle_at(b, idx_b);
+            struct particle b_j = particle_at(fluid, idx_b);
 
             float u_ab = a_i.u-b_j.u, v_ab = a_i.v-b_j.v;
             float x_ab = a_i.x-b_j.x, y_ab = a_i.y-b_j.y;
@@ -408,10 +435,35 @@ void add_viscosity_acceleration(float *du_dt, float *dv_dt, struct particles *a,
             viscosity_i[k] = 0.01*C*mu_ab/mean_rho;
         }
 
-        // compute the acceleration due to viscosity using the SPH gradient
-        float2 viscosity_grad_i = sph_gradient(viscosity_i, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
-        du_dt[idx_a] += viscosity_grad_i.x;
-        dv_dt[idx_a] += viscosity_grad_i.y;
+        // compute the acceleration due to pressure using the SPH gradient
+        viscosity_grad_i = sph_gradient(viscosity_i, fluid, fluid, idx_a, neighbors_idxs, n_neighbors, MASS);
+        du_dt_fluid_i += viscosity_grad_i.x;
+        dv_dt_fluid_i += viscosity_grad_i.y;
+
+        // boundary contribution to pressure acceleration of fluid
+        n_neighbors = find_neighbors(neighbors_idxs, fluid, boundary, idx_a, ctx_boundary);
+
+        for(int k = 0; k < n_neighbors; k++){
+            int idx_b = neighbors_idxs[k];
+            struct particle b_j = particle_at(boundary, idx_b);
+
+            float u_ab = a_i.u-b_j.u, v_ab = a_i.v-b_j.v;
+            float x_ab = a_i.x-b_j.x, y_ab = a_i.y-b_j.y;
+            float mean_rho = (a_i.rho+b_j.rho)/2;
+
+            float xy_dot_uv = x_ab*u_ab+y_ab*v_ab;
+            float xy_dot_xy = x_ab*x_ab+y_ab*y_ab;
+            float mu_ab = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
+
+            viscosity_i[k] = 0.01*C*mu_ab/mean_rho;
+        }
+
+        viscosity_grad_i = sph_gradient(viscosity_i, fluid, boundary, idx_a, neighbors_idxs, n_neighbors, MASS);
+        du_dt_fluid_i += viscosity_grad_i.x;
+        dv_dt_fluid_i += viscosity_grad_i.y;
+
+        du_dt_fluid[idx_a] += du_dt_fluid_i;
+        dv_dt_fluid[idx_a] += dv_dt_fluid_i;
     }
 }
 
@@ -715,10 +767,8 @@ int main(){
         calculate_density(fluid, boundary, ctx_fluid, ctx_boundary);
         calculate_particle_pressure(fluid);
         calculate_particle_pressure(boundary);
-        add_pressure_acceleration(du_dt_pred, dv_dt_pred, fluid, fluid, ctx_fluid);
-        add_pressure_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_boundary);
-        add_viscosity_acceleration(du_dt_pred, dv_dt_pred, fluid, fluid, ctx_fluid);
-        add_viscosity_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_boundary);
+        add_pressure_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_fluid, ctx_boundary);
+        add_viscosity_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_fluid, ctx_boundary);
 
         #pragma omp single
         {
@@ -744,10 +794,8 @@ int main(){
         calculate_density(fluid_pred, boundary_pred, ctx_fluid, ctx_boundary);
         calculate_particle_pressure(fluid_pred);
         calculate_particle_pressure(boundary_pred);
-        add_pressure_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, fluid_pred, ctx_fluid);
-        add_pressure_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_boundary);
-        add_viscosity_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, fluid_pred, ctx_fluid);
-        add_viscosity_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_boundary);
+        add_pressure_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_fluid, ctx_boundary);
+        add_viscosity_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_fluid, ctx_boundary);
 
         #pragma omp single
         {
