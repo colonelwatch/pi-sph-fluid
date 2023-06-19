@@ -306,18 +306,38 @@ int in_initial_shape(float x, float y){
     return euclid_dist(x, y, WIDTH/2, HEIGHT/2) < 0.70;
 }
 
-void add_particle_density(struct particles *a, struct particles *b, struct neighbors_context *context_b){
+void calculate_density(struct particles *fluid, struct particles *boundary, struct neighbors_context *ctx_fluid, 
+    struct neighbors_context *ctx_boundary)
+{
+    static float ones[MAX_POSSIBLE_NEIGHBORS] = {1, 1, 1, 1, 1, 1, 1, 1, 
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+
     #pragma omp for
-    for(int i = 0; i < a->count; i++){
-        int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS];
-        int n_neighbors = find_neighbors(neighbors_idxs, a, b, i, context_b);
+    for(int i = 0; i < fluid->count; i++){
+        float rho_i = 1.293; // init with a small arbitrary val (chose air density) to avoid div-by-zero
+        
+        // fluid contribution to density of fluid
+        n_neighbors = find_neighbors(neighbors_idxs, fluid, fluid, i, ctx_fluid);
+        rho_i += sph(ones, fluid, fluid, i, neighbors_idxs, n_neighbors, MASS);
 
-        static float ones[MAX_POSSIBLE_NEIGHBORS] = { 1, 1, 1, 1, 1, 1, 1, 1, 
-            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
-            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+        // boundary contribution to density of fluid
+        n_neighbors = find_neighbors(neighbors_idxs, fluid, boundary, i, ctx_boundary);
+        rho_i += sph(ones, fluid, boundary, i, neighbors_idxs, n_neighbors, MASS);
 
-        float rho_i = sph(ones, a, b, i, neighbors_idxs, n_neighbors, MASS);
-        a->rho[i] += rho_i;
+        fluid->rho[i] = rho_i;
+    }
+
+    #pragma omp for
+    for(int b = 0; b < boundary->count; b++){
+        float rho_b = 1.293;
+
+        // fluid contribution to density of boundary
+        n_neighbors = find_neighbors(neighbors_idxs, boundary, fluid, b, ctx_fluid);
+        rho_b += sph(ones, boundary, fluid, b, neighbors_idxs, n_neighbors, MASS);
+
+        boundary->rho[b] = rho_b;
     }
 }
 
@@ -685,19 +705,14 @@ int main(){
             for(int i = 0; i < n_fluid; i++){
                 du_dt_pred[i] = g[0];
                 dv_dt_pred[i] = g[1];
-                fluid->rho[i] = 1.293; // init with a small arbitrary val (chose air density) to avoid div-by-zero
             }
-            for(int i = 0; i < n_boundary; i++)
-                boundary->rho[i] = 1.293;
 
             // predictor step: update the neighbors search context
             update_neighbors_context(ctx_fluid, fluid);
         }
 
         // predictor step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
-        add_particle_density(fluid, fluid, ctx_fluid);
-        add_particle_density(fluid, boundary, ctx_boundary);
-        add_particle_density(boundary, fluid, ctx_fluid);
+        calculate_density(fluid, boundary, ctx_fluid, ctx_boundary);
         calculate_particle_pressure(fluid);
         calculate_particle_pressure(boundary);
         add_pressure_acceleration(du_dt_pred, dv_dt_pred, fluid, fluid, ctx_fluid);
@@ -713,10 +728,7 @@ int main(){
                 fluid_pred->y[i] = fluid->y[i] + fluid->v[i]*DT;
                 fluid_pred->u[i] = fluid->u[i] + du_dt_pred[i]*DT;
                 fluid_pred->v[i] = fluid->v[i] + dv_dt_pred[i]*DT;
-                fluid_pred->rho[i] = 1.293;
             }
-            for(int i = 0; i < n_boundary; i++)
-                boundary_pred->rho[i] = 1.293;
 
             // corrector step: initialize the derivative accumulators
             for(int i = 0; i < n_fluid; i++){
@@ -729,9 +741,7 @@ int main(){
         }
 
         // corrector step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
-        add_particle_density(fluid_pred, fluid_pred, ctx_fluid);
-        add_particle_density(fluid_pred, boundary_pred, ctx_boundary);
-        add_particle_density(boundary_pred, fluid_pred, ctx_fluid);
+        calculate_density(fluid_pred, boundary_pred, ctx_fluid, ctx_boundary);
         calculate_particle_pressure(fluid_pred);
         calculate_particle_pressure(boundary_pred);
         add_pressure_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, fluid_pred, ctx_fluid);
