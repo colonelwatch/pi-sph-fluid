@@ -312,11 +312,9 @@ void add_particle_density(struct particles *a, struct particles *b, struct neigh
         int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS];
         int n_neighbors = find_neighbors(neighbors_idxs, a, b, i, context_b);
 
-        static float ones[MAX_POSSIBLE_NEIGHBORS] = {
-            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
-            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
-            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
-        };
+        static float ones[MAX_POSSIBLE_NEIGHBORS] = { 1, 1, 1, 1, 1, 1, 1, 1, 
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
 
         float rho_i = sph(ones, a, b, i, neighbors_idxs, n_neighbors, MASS);
         a->rho[i] += rho_i;
@@ -555,11 +553,9 @@ int main(){
     fluid = alloc_particles(n_fluid);
     fluid_pred = alloc_particles(n_fluid);
     float *du_dt_pred = (float*)malloc(n_fluid*sizeof(float)), // momentum and continuity results for predictor step
-          *dv_dt_pred = (float*)malloc(n_fluid*sizeof(float)),
-          *drho_dt_pred = (float*)malloc(n_fluid*sizeof(float));
+          *dv_dt_pred = (float*)malloc(n_fluid*sizeof(float));
     float *du_dt_corr = (float*)malloc(n_fluid*sizeof(float)), // momentum and continuity results for corrector step
-          *dv_dt_corr = (float*)malloc(n_fluid*sizeof(float)),
-          *drho_dt_corr = (float*)malloc(n_fluid*sizeof(float));
+          *dv_dt_corr = (float*)malloc(n_fluid*sizeof(float));
     
     // initialize fluid particles
     particle_counter = 0;
@@ -587,8 +583,6 @@ int main(){
     struct particles *boundary, *boundary_pred; 
     boundary = alloc_particles(n_boundary);
     boundary_pred = alloc_particles(n_boundary);
-    float *drho_dt_boundary_pred = (float*)malloc(n_boundary*sizeof(float)); // boundary particles don't move...
-    float *drho_dt_boundary_corr = (float*)malloc(n_boundary*sizeof(float)); // ...so we only update rho
 
     // initialize boundary particles velocity and density (velocity will never change)
     for(int i = 0; i < n_boundary; i++){
