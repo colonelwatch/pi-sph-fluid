@@ -15,7 +15,7 @@
 #define C 160.0f         // m/s, "numerical" speed of sound (10*max_speed for correct WCSPH)
 #define G 9.81f          // m/s^2, gravitational acceleration
 
-#define M (RHO_0*(1.333f*M_PI*H*H*H)) // kg, mass of each particle
+#define M (RHO_0*0.83*H*H) // kg, mass of each particle
 #define MAX_POSSIBLE_NEIGHBORS 48 // the sum of the first three hexagonal numbers is 22, so this should be enough
 
 
@@ -229,14 +229,36 @@ int find_neighbors(int *neighbors_idxs, struct particles *a, struct particles *b
 
 enum leading_factor { MASS, VOLUME }; // fundamental SPH approx uses volume, but most derived invocations use mass
 
-float2 sph_gradient(float *quantity, struct particles *a, struct particles *b, int idx_a, int *idxs_b, int n_idxs_b, 
+float sph(float *quantity, struct particles *a, struct particles *b, int idx_a, int *idxs_b, int n_idxs_b,
+    enum leading_factor leading_factor)
+{
+    float x_a = a->x[idx_a], y_a = a->y[idx_a];
+
+    float sph_quantity = 0;
+    for(int k = 0; k < n_idxs_b; k++){
+        int j = idxs_b[k]; // j is traditionally the index of the neighbor particle
+
+        float x_b = b->x[j], y_b = b->y[j];
+        float rho_b = b->rho[j];
+
+        float q = euclid_dist(x_a, y_a, x_b, y_b) / H;
+        float W_ab_ij = W(q);
+        float leading_factor_j = (leading_factor == MASS)? M : M/rho_b;
+
+        sph_quantity += leading_factor_j * quantity[k] * W_ab_ij;
+    }
+
+    return sph_quantity;
+}
+
+float2 sph_gradient(float *quantity, struct particles *a, struct particles *b, int idx_a, int *idxs_b, int n_idxs_b,
     enum leading_factor leading_factor)
 {
     float x_a = a->x[idx_a], y_a = a->y[idx_a];
     
     float2 grad_quantity = (float2){ .x = 0, .y = 0 };
     for(int k = 0; k < n_idxs_b; k++){
-        int j = idxs_b[k]; // j is traditionally the index of the neighbor particle
+        int j = idxs_b[k];
 
         float x_b = b->x[j], y_b = b->y[j];
         float rho_b = b->rho[j];
@@ -284,16 +306,34 @@ int in_initial_shape(float x, float y){
     return euclid_dist(x, y, WIDTH/2, HEIGHT/2) < 0.70;
 }
 
-// "slighly compressible" SPH, or weakly-compressible SPH (WCSPH) expresses pressure as an explicit function of density, 
-//  not an implicit one needing an iterative solver. Sometimes doesn't use the true speed of sound in a fluid, and 
-//  rather uses some number high enough that the density doesn't vary by too many percents. That's also how I did it   
+void add_particle_density(struct particles *a, struct particles *b, struct neighbors_context *context_b){
+    #pragma omp for
+    for(int i = 0; i < a->count; i++){
+        int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS];
+        int n_neighbors = find_neighbors(neighbors_idxs, a, b, i, context_b);
+
+        static float ones[MAX_POSSIBLE_NEIGHBORS] = {
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+        };
+
+        float rho_i = sph(ones, a, b, i, neighbors_idxs, n_neighbors, MASS);
+        a->rho[i] += rho_i;
+    }
+}
+
+// "slighly compressible" SPH, or weakly-compressible SPH (WCSPH) expresses pressure as an explicit function of density,
+//  not an implicit one needing an iterative solver. Sometimes doesn't use the true speed of sound in a fluid, and
+//  rather uses some number high enough that the density doesn't vary by too many percents. That's also how I did it
 //  here because I saw that using the true speed caused instability. See Monaghan 1992 or Monaghan 2005.
 void calculate_particle_pressure(struct particles *particles){
     #pragma omp for
     for(int i = 0; i < particles->count; i++){
         const float B = C*C*RHO_0/7;
         float rho_ratio = particles->rho[i]/RHO_0;
-        particles->p[i] = B*(pow(rho_ratio, 7)-1);
+        float pressure_i = B*(pow(rho_ratio, 7)-1);
+        particles->p[i] = (pressure_i > 0)? pressure_i : 0;
     }
 }
 
@@ -651,25 +691,25 @@ int main(){
             for(int i = 0; i < n_fluid; i++){
                 du_dt_pred[i] = g[0];
                 dv_dt_pred[i] = g[1];
-                drho_dt_pred[i] = 0;
+                fluid->rho[i] = 1.293; // init with a small arbitrary val (chose air density) to avoid div-by-zero
             }
             for(int i = 0; i < n_boundary; i++)
-                drho_dt_boundary_pred[i] = 0;
-            
+                boundary->rho[i] = 1.293;
+
             // predictor step: update the neighbors search context
             update_neighbors_context(ctx_fluid, fluid);
         }
 
         // predictor step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
+        add_particle_density(fluid, fluid, ctx_fluid);
+        add_particle_density(fluid, boundary, ctx_boundary);
+        add_particle_density(boundary, fluid, ctx_fluid);
         calculate_particle_pressure(fluid);
         calculate_particle_pressure(boundary);
         add_pressure_acceleration(du_dt_pred, dv_dt_pred, fluid, fluid, ctx_fluid);
         add_pressure_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_boundary);
         add_viscosity_acceleration(du_dt_pred, dv_dt_pred, fluid, fluid, ctx_fluid);
         add_viscosity_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_boundary);
-        add_compression_effect(drho_dt_pred, fluid, fluid, ctx_fluid);
-        add_compression_effect(drho_dt_pred, fluid, boundary, ctx_boundary);
-        add_compression_effect(drho_dt_boundary_pred, boundary, fluid, ctx_fluid);
 
         #pragma omp single
         {
@@ -679,33 +719,31 @@ int main(){
                 fluid_pred->y[i] = fluid->y[i] + fluid->v[i]*DT;
                 fluid_pred->u[i] = fluid->u[i] + du_dt_pred[i]*DT;
                 fluid_pred->v[i] = fluid->v[i] + dv_dt_pred[i]*DT;
-                fluid_pred->rho[i] = fluid->rho[i] + drho_dt_pred[i]*DT;
+                fluid_pred->rho[i] = 1.293;
             }
             for(int i = 0; i < n_boundary; i++)
-                boundary_pred->rho[i] = boundary->rho[i] + drho_dt_boundary_pred[i]*DT;
+                boundary_pred->rho[i] = 1.293;
 
             // corrector step: initialize the derivative accumulators
             for(int i = 0; i < n_fluid; i++){
                 du_dt_corr[i] = g[0];
                 dv_dt_corr[i] = g[1];
-                drho_dt_corr[i] = 0;
             }
-            for(int i = 0; i < n_boundary; i++) drho_dt_boundary_corr[i] = 0;
 
             // corrector step: update the neighbors context using the predictor positions
             update_neighbors_context(ctx_fluid, fluid_pred);
         }
 
         // corrector step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
+        add_particle_density(fluid_pred, fluid_pred, ctx_fluid);
+        add_particle_density(fluid_pred, boundary_pred, ctx_boundary);
+        add_particle_density(boundary_pred, fluid_pred, ctx_fluid);
         calculate_particle_pressure(fluid_pred);
         calculate_particle_pressure(boundary_pred);
         add_pressure_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, fluid_pred, ctx_fluid);
         add_pressure_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_boundary);
         add_viscosity_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, fluid_pred, ctx_fluid);
         add_viscosity_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_boundary);
-        add_compression_effect(drho_dt_corr, fluid_pred, fluid_pred, ctx_fluid);
-        add_compression_effect(drho_dt_corr, fluid_pred, boundary_pred, ctx_boundary);
-        add_compression_effect(drho_dt_boundary_corr, boundary_pred, fluid_pred, ctx_fluid);
 
         #pragma omp single
         {
@@ -715,10 +753,6 @@ int main(){
                 fluid->y[i] += 0.5f*(fluid_pred->v[i] + fluid->v[i])*DT;
                 fluid->u[i] += 0.5f*(du_dt_pred[i] + du_dt_corr[i])*DT;
                 fluid->v[i] += 0.5f*(dv_dt_pred[i] + dv_dt_corr[i])*DT;
-                fluid->rho[i] += 0.5f*(drho_dt_pred[i] + drho_dt_corr[i])*DT;
-            }
-            for(int i = 0; i < n_boundary; i++){
-                boundary->rho[i] += 0.5f*(drho_dt_boundary_pred[i] + drho_dt_boundary_corr[i])*DT;
             }
 
 
