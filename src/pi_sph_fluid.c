@@ -232,7 +232,7 @@ int find_neighbors(int *neighbors_idxs, struct particles *a, struct particles *b
 // SPH APPROXIMATIONS
 // Contained implementations of the SPH approximation, integrating all of the above
 
-enum leading_factor { MASS, VOLUME }; // fundamental SPH approx uses volume, but most derived invocations use mass
+enum leading_factor { MASS, VOLUME, ONE }; // fundamental SPH approx uses volume, but most derived invocations use mass
 
 float sph(float *quantity, struct particles *a, struct particles *b, int idx_a, int *idxs_b, int n_idxs_b,
     enum leading_factor leading_factor)
@@ -249,7 +249,14 @@ float sph(float *quantity, struct particles *a, struct particles *b, int idx_a, 
 
         float q = euclid_dist(x_a, y_a, x_b, y_b) / H;
         float W_ab_ij = W(q);
-        float leading_factor_j = (leading_factor == MASS)? m_b : m_b/rho_b;
+
+        float leading_factor_j;
+        switch(leading_factor){
+            case MASS:      leading_factor_j = m_b;             break;
+            case VOLUME:    leading_factor_j = m_b / rho_b;     break;
+            case ONE:       leading_factor_j = 1;               break; // TODO: ONE is a hack to implement Akinci 2012
+            default:        leading_factor_j = -1;              break; // this should never happen
+        }
 
         sph_quantity += leading_factor_j * quantity[k] * W_ab_ij;
     }
@@ -314,6 +321,22 @@ int in_initial_shape(float x, float y){
     return euclid_dist(x, y, WIDTH/2, HEIGHT/2) < 0.70;
 }
 
+void calculate_boundary_pseudomass(struct particles *boundary, struct neighbors_context *ctx_boundary){
+    static float ones[MAX_POSSIBLE_NEIGHBORS] = {1, 1, 1, 1, 1, 1, 1, 1, 
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+
+    #pragma omp for
+    for(int i = 0; i < boundary->count; i++){
+        n_neighbors = find_neighbors(neighbors_idxs, boundary, boundary, i, ctx_boundary);
+
+        float recip_volume = sph(ones, boundary, boundary, i, neighbors_idxs, n_neighbors, ONE);
+        float m_i = boundary->rho[i] / recip_volume;
+        boundary->m[i] = m_i;
+    }
+}
+
 void calculate_density(struct particles *fluid, struct particles *boundary, struct neighbors_context *ctx_fluid, 
     struct neighbors_context *ctx_boundary)
 {
@@ -335,17 +358,6 @@ void calculate_density(struct particles *fluid, struct particles *boundary, stru
         rho_i += sph(ones, fluid, boundary, i, neighbors_idxs, n_neighbors, MASS);
 
         fluid->rho[i] = rho_i;
-    }
-
-    #pragma omp for
-    for(int b = 0; b < boundary->count; b++){
-        float rho_b = 1.293;
-
-        // fluid contribution to density of boundary
-        n_neighbors = find_neighbors(neighbors_idxs, boundary, fluid, b, ctx_fluid);
-        rho_b += sph(ones, boundary, fluid, b, neighbors_idxs, n_neighbors, MASS);
-
-        boundary->rho[b] = rho_b;
     }
 }
 
@@ -395,12 +407,7 @@ void add_pressure_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct pa
         // boundary contribution to pressure acceleration of fluid
         n_neighbors = find_neighbors(neighbors_idxs, fluid, boundary, idx_a, ctx_boundary);
 
-        for(int k = 0; k < n_neighbors; k++){
-            int idx_b = neighbors_idxs[k];
-            struct particle b_j = particle_at(boundary, idx_b);
-
-            pressure_i[k] = -( a_i.p/(a_i.rho*a_i.rho) + b_j.p/(b_j.rho*b_j.rho) );
-        }
+        for(int k = 0; k < n_neighbors; k++) pressure_i[k] = -a_i.p/(a_i.rho*a_i.rho);
 
         pressure_grad_i = sph_gradient(pressure_i, fluid, boundary, idx_a, neighbors_idxs, n_neighbors, MASS);
         du_dt_fluid_i += pressure_grad_i.x;
@@ -457,13 +464,13 @@ void add_viscosity_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct p
 
             float u_ab = a_i.u-b_j.u, v_ab = a_i.v-b_j.v;
             float x_ab = a_i.x-b_j.x, y_ab = a_i.y-b_j.y;
-            float mean_rho = (a_i.rho+b_j.rho)/2;
+            // float mean_rho = (a_i.rho+b_j.rho)/2;
 
             float xy_dot_uv = x_ab*u_ab+y_ab*v_ab;
             float xy_dot_xy = x_ab*x_ab+y_ab*y_ab;
             float mu_ab = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
 
-            viscosity_i[k] = 0.01*C*mu_ab/mean_rho;
+            viscosity_i[k] = 0.01*C*mu_ab/a_i.rho; // use fluid density only, not the mean density
         }
 
         viscosity_grad_i = sph_gradient(viscosity_i, fluid, boundary, idx_a, neighbors_idxs, n_neighbors, MASS);
@@ -671,7 +678,7 @@ int main(){
     for(int i = 0; i < n_boundary; i++){
         boundary->u[i] = 0;
         boundary->v[i] = 0;
-        boundary->m[i] = M;
+        boundary->rho[i] = RHO_0;
     }
 
     // initialize boundary particles locations (will never change)
@@ -706,7 +713,6 @@ int main(){
         boundary_pred->y[i] = boundary->y[i];
         boundary_pred->u[i] = boundary->u[i];
         boundary_pred->v[i] = boundary->v[i];
-        boundary_pred->m[i] = boundary->m[i];
     }
 
 
@@ -720,6 +726,10 @@ int main(){
     ctx_fluid = initialize_neighbors_context(fluid->count, x_min, x_max, y_min, y_max, 2*H);
     ctx_boundary = initialize_neighbors_context(boundary->count, x_min, x_max, y_min, y_max, 2*H);
     update_neighbors_context(ctx_boundary, boundary); // this never needs to be called again, so we'll call it now
+
+
+    calculate_boundary_pseudomass(boundary, ctx_boundary);
+    for(int i = 0; i < n_boundary; i++) boundary_pred->m[i] = boundary->m[i];
 
 
     struct timespec now; // initialize the time-keeping with the current time
