@@ -15,7 +15,8 @@
 #define C 160.0f         // m/s, "numerical" speed of sound (10*max_speed for correct WCSPH)
 #define G 9.81f          // m/s^2, gravitational acceleration
 
-#define M (RHO_0*0.83*H*H) // kg, mass of each particle
+#define V (0.83*H*H) // m^3, volume of each fluidparticle
+#define M (RHO_0*V) // kg, mass of each fluid particle
 #define MAX_POSSIBLE_NEIGHBORS 48 // the sum of the first three hexagonal numbers is 22, so this should be enough
 
 
@@ -24,15 +25,17 @@
 
 struct particles{
     int count;
-    float *x, *y, *rho;
-    float *u, *v;
-    float *p; // pressure, which is only a function of rho
+    float *x, *y, *u, *v; // intrinsic values
+    float *m; // mass is RHO_0*V for fluid particles, but some calculated constant for boundary particles
+    float *rho; // rho is derived using SPH
+    float *p; // pressure is derived from some incompressible-enforcing routine
 };
 
 struct particle{ // struct representing a single particle, which should serve as a function input or output
-    float x, y, rho;
-    float u, v;
-    float p; // pressure, which is only a function of rho
+    float x, y, u, v;
+    float m;
+    float rho;
+    float p;
 };
 
 // Helper function for allocating all the arrays of the particles struct using a malloc-like syntax
@@ -42,9 +45,10 @@ struct particles* alloc_particles(int n_particles){
     particles->count = n_particles;
     particles->x = (float*)malloc(n_particles*sizeof(float));
     particles->y = (float*)malloc(n_particles*sizeof(float));
-    particles->rho = (float*)malloc(n_particles*sizeof(float));
     particles->u = (float*)malloc(n_particles*sizeof(float));
     particles->v = (float*)malloc(n_particles*sizeof(float));
+    particles->m = (float*)malloc(n_particles*sizeof(float));
+    particles->rho = (float*)malloc(n_particles*sizeof(float));
     particles->p = (float*)malloc(n_particles*sizeof(float));
 
     return particles;
@@ -53,8 +57,9 @@ struct particles* alloc_particles(int n_particles){
 // Helper function for pulling an individual particle out of the struct of arrays
 struct particle particle_at(struct particles *particles, int idx){
     return (struct particle){
-        .x = particles->x[idx], .y = particles->y[idx], .rho = particles->rho[idx],
-        .u = particles->u[idx], .v = particles->v[idx],
+        .x = particles->x[idx], .y = particles->y[idx], .u = particles->u[idx], .v = particles->v[idx],
+        .m = particles->m[idx],
+        .rho = particles->rho[idx],
         .p = particles->p[idx]
     };
 }
@@ -239,11 +244,12 @@ float sph(float *quantity, struct particles *a, struct particles *b, int idx_a, 
         int j = idxs_b[k]; // j is traditionally the index of the neighbor particle
 
         float x_b = b->x[j], y_b = b->y[j];
+        float m_b = b->m[j];
         float rho_b = b->rho[j];
 
         float q = euclid_dist(x_a, y_a, x_b, y_b) / H;
         float W_ab_ij = W(q);
-        float leading_factor_j = (leading_factor == MASS)? M : M/rho_b;
+        float leading_factor_j = (leading_factor == MASS)? m_b : m_b/rho_b;
 
         sph_quantity += leading_factor_j * quantity[k] * W_ab_ij;
     }
@@ -261,10 +267,11 @@ float2 sph_gradient(float *quantity, struct particles *a, struct particles *b, i
         int j = idxs_b[k];
 
         float x_b = b->x[j], y_b = b->y[j];
+        float m_b = b->m[j];
         float rho_b = b->rho[j];
 
         float2 grad_a_W_ab_ij = grad_a_W_ab(x_a, y_a, x_b, y_b);
-        float leading_factor_j = (leading_factor == MASS)? M : M/rho_b;
+        float leading_factor_j = (leading_factor == MASS)? m_b : m_b/rho_b;
 
         grad_quantity.x += leading_factor_j*quantity[k]*grad_a_W_ab_ij.x;
         grad_quantity.y += leading_factor_j*quantity[k]*grad_a_W_ab_ij.y;
@@ -283,10 +290,11 @@ float sph_divergence(float *quantity_x, float *quantity_y, struct particles *a, 
         int j = idxs_b[k];
 
         float x_b = b->x[j], y_b = b->y[j];
+        float m_b = b->m[j];
         float rho_b = b->rho[j];
 
         float2 grad_a_W_ab_ij = grad_a_W_ab(x_a, y_a, x_b, y_b);
-        float leading_factor_j = (leading_factor == MASS)? M : M/rho_b;
+        float leading_factor_j = (leading_factor == MASS)? m_b : m_b/rho_b;
 
         float quantity_dot_grad = quantity_x[k]*grad_a_W_ab_ij.x + quantity_y[k]*grad_a_W_ab_ij.y;
 
@@ -638,6 +646,7 @@ int main(){
                 fluid->y[particle_counter] = y_0;
                 fluid->u[particle_counter] = 0;
                 fluid->v[particle_counter] = 0;
+                fluid->m[particle_counter] = M;
                 fluid->rho[particle_counter] = RHO_0;
 
                 particle_counter++;
@@ -645,6 +654,8 @@ int main(){
         }
     }
 
+    // initialize mass of fluid_pred (will never change again)
+    for(int i = 0; i < n_fluid; i++) fluid_pred->m[i] = M;
 
     // count the number of boundary particles we need
     int n_boundary = 0;
@@ -660,7 +671,7 @@ int main(){
     for(int i = 0; i < n_boundary; i++){
         boundary->u[i] = 0;
         boundary->v[i] = 0;
-        boundary->rho[i] = RHO_0;
+        boundary->m[i] = M;
     }
 
     // initialize boundary particles locations (will never change)
@@ -695,6 +706,7 @@ int main(){
         boundary_pred->y[i] = boundary->y[i];
         boundary_pred->u[i] = boundary->u[i];
         boundary_pred->v[i] = boundary->v[i];
+        boundary_pred->m[i] = boundary->m[i];
     }
 
 
