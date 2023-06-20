@@ -666,8 +666,8 @@ int main(){
 
     // count the number of boundary particles we need
     int n_boundary = 0;
-    for(float x_0 = 0; x_0 < WIDTH; x_0 += R/3) n_boundary += 4; // two particles per side (top and bottom)
-    for(float y_0 = 0; y_0 < HEIGHT; y_0 += R/3) n_boundary += 4;
+    for(float x_0 = 0; x_0 < WIDTH; x_0 += R/3) n_boundary += 2;
+    for(float y_0 = 0; y_0 < HEIGHT; y_0 += R/3) n_boundary += 2;
 
     // alloc boundary particles and derivatives
     struct particles *boundary, *boundary_pred; 
@@ -687,23 +687,15 @@ int main(){
         boundary->x[particle_counter] = x_0;
         boundary->y[particle_counter] = 0;
         boundary->x[particle_counter+1] = x_0;
-        boundary->y[particle_counter+1] = 0-R;
-        boundary->x[particle_counter+2] = x_0;
-        boundary->y[particle_counter+2] = HEIGHT;
-        boundary->x[particle_counter+3] = x_0;
-        boundary->y[particle_counter+3] = HEIGHT+R;
-        particle_counter += 4;
+        boundary->y[particle_counter+1] = HEIGHT;
+        particle_counter += 2;
     }
     for(float y_0 = 0; y_0 < HEIGHT; y_0 += R/3){
         boundary->x[particle_counter] = 0;
         boundary->y[particle_counter] = y_0;
-        boundary->x[particle_counter+1] = 0-R;
+        boundary->x[particle_counter+1] = WIDTH;
         boundary->y[particle_counter+1] = y_0;
-        boundary->x[particle_counter+2] = WIDTH;
-        boundary->y[particle_counter+2] = y_0;
-        boundary->x[particle_counter+3] = WIDTH+R;
-        boundary->y[particle_counter+3] = y_0;
-        particle_counter += 4;
+        particle_counter += 2;
     }
 
     // boundary_pred x, y, u, and v are the same as boundary but will never be 
