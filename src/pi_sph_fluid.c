@@ -361,17 +361,238 @@ void calculate_density(struct particles *fluid, struct particles *boundary, stru
     }
 }
 
-// "slighly compressible" SPH, or weakly-compressible SPH (WCSPH) expresses pressure as an explicit function of density,
-//  not an implicit one needing an iterative solver. Sometimes doesn't use the true speed of sound in a fluid, and
-//  rather uses some number high enough that the density doesn't vary by too many percents. That's also how I did it
-//  here because I saw that using the true speed caused instability. See Monaghan 1992 or Monaghan 2005.
-void calculate_particle_pressure(struct particles *particles){
+// a struct containing pointers to data that needs to be shared between threads 
+//  in order to calculate the pressure in a parallel fashion
+// needs to alloced before calling calculate_particle_pressure
+struct pressure_context{
+    float *d_diag_x, *d_diag_y;
+    float *a_diag;
+    float *d_neighbors_x_dot_p, *d_neighbors_y_dot_p;
+    float rho_avg;
+};
+
+struct pressure_context* alloc_pressure_context(int n_particles){
+    struct pressure_context *ctx = malloc(sizeof(struct pressure_context));
+
+    ctx->d_diag_x = malloc(n_particles*sizeof(float));
+    ctx->d_diag_y = malloc(n_particles*sizeof(float));
+    ctx->a_diag = malloc(n_particles*sizeof(float));
+    ctx->d_neighbors_x_dot_p = malloc(n_particles*sizeof(float));
+    ctx->d_neighbors_y_dot_p = malloc(n_particles*sizeof(float));
+
+    return ctx;
+}
+
+// before calling calculate_particle_pressure for the first time, allocate the pressure context and initialize the 
+//  particles pressure to 0
+void calculate_particle_pressure(struct particles *fluid, struct particles *boundary, 
+    struct neighbors_context *ctx_fluid, struct neighbors_context *ctx_boundary, float *rho_pred, 
+    struct pressure_context *pressure_ctx)
+{
+    int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+    
     #pragma omp for
-    for(int i = 0; i < particles->count; i++){
-        const float B = C*C*RHO_0/7;
-        float rho_ratio = particles->rho[i]/RHO_0;
-        float pressure_i = B*(pow(rho_ratio, 7)-1);
-        particles->p[i] = (pressure_i > 0)? pressure_i : 0;
+    for(int i = 0; i < fluid->count; i++){
+        struct particle a_i = particle_at(fluid, i);
+
+        float one_over_rho_i_square[MAX_POSSIBLE_NEIGHBORS];
+        float2 temp;
+        float d_diag_i_x = 0, d_diag_i_y = 0;
+
+        // compute d_diag from the fluid neighbors
+        n_neighbors = find_neighbors(neighbors_idxs, fluid, fluid, i, ctx_fluid);
+
+        for(int k = 0; k < n_neighbors; k++) one_over_rho_i_square[k] = 1/(a_i.rho * a_i.rho);
+
+        temp = sph_gradient(one_over_rho_i_square, fluid, fluid, i, neighbors_idxs, n_neighbors, MASS);
+        d_diag_i_x += -DT*DT*temp.x;
+        d_diag_i_y += -DT*DT*temp.y;
+
+        // compute d_diag from the boundary neighbors
+        n_neighbors = find_neighbors(neighbors_idxs, fluid, boundary, i, ctx_boundary);
+
+        for(int k = 0; k < n_neighbors; k++) one_over_rho_i_square[k] = 1/(a_i.rho * a_i.rho);
+
+        temp = sph_gradient(one_over_rho_i_square, fluid, boundary, i, neighbors_idxs, n_neighbors, MASS);
+        d_diag_i_x += -DT*DT*temp.x;
+        d_diag_i_y += -DT*DT*temp.y;
+        
+        pressure_ctx->d_diag_x[i] = d_diag_i_x;
+        pressure_ctx->d_diag_y[i] = d_diag_i_y;
+    }
+
+    #pragma omp for
+    for(int i = 0; i < fluid->count; i++){
+        struct particle a_i = particle_at(fluid, i);
+
+        n_neighbors = find_neighbors(neighbors_idxs, fluid, fluid, i, ctx_fluid);
+
+        // compute a_diag from the neighbors
+        float d_diag_minus_d_neighbors_x[MAX_POSSIBLE_NEIGHBORS];
+        float d_diag_minus_d_neighbors_y[MAX_POSSIBLE_NEIGHBORS];
+        for(int k = 0; k < n_neighbors; k++){
+            int j = neighbors_idxs[k];
+            struct particle b_j = particle_at(fluid, j);
+
+            float temp = -DT*DT*M/(a_i.rho*a_i.rho);
+            float2 grad_i_W_ji = grad_a_W_ab(b_j.x, b_j.y, a_i.x, a_i.y);
+            float2 d_ji = (float2){ .x = temp*grad_i_W_ji.x, .y = temp*grad_i_W_ji.y };
+
+            d_diag_minus_d_neighbors_x[k] = pressure_ctx->d_diag_x[i] - d_ji.x;
+            d_diag_minus_d_neighbors_y[k] = pressure_ctx->d_diag_y[i] - d_ji.y;
+        }
+
+        float a_diag_i = sph_divergence(d_diag_minus_d_neighbors_x, 
+            d_diag_minus_d_neighbors_y, fluid, fluid, i, neighbors_idxs, 
+            n_neighbors, MASS);
+        
+        pressure_ctx->a_diag[i] = (a_diag_i < -1e-3) ? a_diag_i : -1e-3;
+    }
+
+    // before iterating, set the pressure to half of what it was before in order to implement a warm start
+    #pragma omp single
+    for(int i = 0; i < fluid->count; i++) fluid->p[i] *= 0.5;
+
+    #pragma omp single
+    {
+        float rho_sum = 0;
+        for(int i = 0; i < fluid->count; i++) rho_sum += rho_pred[i];
+        pressure_ctx->rho_avg = rho_sum / fluid->count;
+
+        // printf("rho_avg = %f\n", pressure_ctx->rho_avg);
+    }
+
+    for(int l = 0; l < 100 && (fabs((pressure_ctx->rho_avg-RHO_0)/RHO_0) > 0.01 || l < 2); l++){
+        #pragma omp for
+        for(int i = 0; i < fluid->count; i++){
+            struct particle a_i = particle_at(fluid, i);
+
+            n_neighbors = find_neighbors(neighbors_idxs, fluid, fluid, i, ctx_fluid);
+
+            // compute d_neighbors_dot_p from the neighbors
+            float d_neighbors_x_dot_p_i = 0, d_neighbors_y_dot_p_i = 0;
+            for(int k = 0; k < n_neighbors; k++){
+                int j = neighbors_idxs[k];
+                struct particle b_j = particle_at(fluid, j);
+
+                float temp = -DT*DT*M/(b_j.rho*b_j.rho);
+                float2 grad_i_W_ij = grad_a_W_ab(a_i.x, a_i.y, b_j.x, b_j.y);
+                float2 d_ij = (float2){ .x = temp*grad_i_W_ij.x, .y = temp*grad_i_W_ij.y };
+
+                d_neighbors_x_dot_p_i += d_ij.x * fluid->p[j];
+                d_neighbors_y_dot_p_i += d_ij.y * fluid->p[j];
+            }
+
+            pressure_ctx->d_neighbors_x_dot_p[i] = d_neighbors_x_dot_p_i;
+            pressure_ctx->d_neighbors_y_dot_p[i] = d_neighbors_y_dot_p_i;
+        }
+
+        #pragma omp for
+        for(int i = 0; i < fluid->count; i++){
+            struct particle a_i = particle_at(fluid, i);
+
+            n_neighbors = find_neighbors(neighbors_idxs, fluid, fluid, i, ctx_fluid);
+
+            float lu_p_i = lu_p_i = RHO_0-rho_pred[i]; // will contain all terms of (L+U)p used in the Jacobi solver
+
+            // third term of (L+U)p
+            float term_three_x[MAX_POSSIBLE_NEIGHBORS], term_three_y[MAX_POSSIBLE_NEIGHBORS];
+            for(int k = 0; k < n_neighbors; k++){
+                int j = neighbors_idxs[k];
+                struct particle b_j = particle_at(fluid, j);
+
+                float temp = -DT*DT*M/(a_i.rho*a_i.rho);
+                float2 grad_i_W_ji = grad_a_W_ab(b_j.x, b_j.y, a_i.x, a_i.y);
+                float2 d_ji = (float2){ .x = temp*grad_i_W_ji.x, .y = temp*grad_i_W_ji.y };
+
+                float term_three_ij_x = pressure_ctx->d_neighbors_x_dot_p[i] - pressure_ctx->d_diag_x[j] * fluid->p[j] 
+                    - pressure_ctx->d_neighbors_x_dot_p[j] + d_ji.x * fluid->p[i];
+                float term_three_ij_y = pressure_ctx->d_neighbors_y_dot_p[i] - pressure_ctx->d_diag_y[j] * fluid->p[j] 
+                    - pressure_ctx->d_neighbors_y_dot_p[j] + d_ji.y * fluid->p[i];
+                
+                term_three_x[k] = term_three_ij_x;
+                term_three_y[k] = term_three_ij_y;
+            }
+
+            lu_p_i += -sph_divergence(term_three_x, term_three_y, fluid, fluid, i, neighbors_idxs, n_neighbors, MASS);
+
+            // fill the neighbors_idxs array with the boundary particles
+            n_neighbors = find_neighbors(neighbors_idxs, fluid, boundary, i, ctx_boundary);
+
+            // fourth term of (L+U)p
+            float term_four_x[MAX_POSSIBLE_NEIGHBORS], term_four_y[MAX_POSSIBLE_NEIGHBORS];
+            for(int k = 0; k < n_neighbors; k++){
+                // int j = neighbors_idxs[k];
+                // struct particle b_j = particle_at(boundary, j);
+
+                float term_four_ij_x = pressure_ctx->d_neighbors_x_dot_p[i];
+                float term_four_ij_y = pressure_ctx->d_neighbors_y_dot_p[i];
+
+                term_four_x[k] = term_four_ij_x;
+                term_four_y[k] = term_four_ij_y;
+            }
+
+            lu_p_i += -sph_divergence(term_four_x, term_four_y, fluid, boundary, i, neighbors_idxs, n_neighbors, MASS);
+
+            // update the pressure
+            fluid->p[i] = 0.5 * fluid->p[i] + 0.5/pressure_ctx->a_diag[i]*lu_p_i;
+
+            // clamp the pressure
+            if(fluid->p[i] < -20000) fluid->p[i] = -20000;
+        }
+
+        // calculate the new density
+        #pragma omp for
+        for(int i = 0; i < fluid->count; i++){
+            // struct particle a_i = particle_at(fluid, i);
+
+            n_neighbors = find_neighbors(neighbors_idxs, fluid, fluid, i, ctx_fluid);
+
+            float rho_i = rho_pred[i];
+            float temp_x[MAX_POSSIBLE_NEIGHBORS] = {0}, temp_y[MAX_POSSIBLE_NEIGHBORS] = {0};
+            
+            for(int k = 0; k < n_neighbors; k++){
+                int j = neighbors_idxs[k];
+
+                temp_x[k] += pressure_ctx->d_diag_x[i] * fluid->p[i];
+                temp_y[k] += pressure_ctx->d_diag_y[i] * fluid->p[i];
+                temp_x[k] += pressure_ctx->d_neighbors_x_dot_p[i];
+                temp_y[k] += pressure_ctx->d_neighbors_y_dot_p[i];
+                temp_x[k] -= pressure_ctx->d_diag_x[j] * fluid->p[j];
+                temp_y[k] -= pressure_ctx->d_diag_y[j] * fluid->p[j];
+                temp_x[k] -= pressure_ctx->d_neighbors_x_dot_p[j];
+                temp_y[k] -= pressure_ctx->d_neighbors_y_dot_p[j];
+            }
+
+            rho_i += sph_divergence(temp_x, temp_y, fluid, fluid, i, neighbors_idxs, n_neighbors, MASS);
+
+            n_neighbors = find_neighbors(neighbors_idxs, fluid, boundary, i, ctx_boundary);
+
+            for(int k = 0; k < n_neighbors; k++){
+                // int j = neighbors_idxs[k];
+
+                temp_x[k] += pressure_ctx->d_diag_x[i] * fluid->p[i];
+                temp_y[k] += pressure_ctx->d_diag_y[i] * fluid->p[i];
+                temp_x[k] += pressure_ctx->d_neighbors_x_dot_p[i];
+                temp_y[k] += pressure_ctx->d_neighbors_y_dot_p[i];
+            }
+
+            rho_i += sph_divergence(temp_x, temp_y, fluid, boundary, i, neighbors_idxs, n_neighbors, MASS);
+
+            fluid->rho[i] = rho_i;
+        }
+
+        // calculate the average density
+        #pragma omp single
+        {
+            float rho_sum = 0;
+            for(int i = 0; i < fluid->count; i++) rho_sum += fluid->rho[i];
+            pressure_ctx->rho_avg = rho_sum / fluid->count;
+
+            // // print iteration number and average density
+            // if(l % 20 == 0 || l < 10)
+            //     printf("Iteration %d, average density: %f\n", l, pressure_ctx->rho_avg);
+        }
     }
 }
 
@@ -482,28 +703,28 @@ void add_viscosity_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct p
     }
 }
 
-void add_compression_effect(float *drho_dt, struct particles *a, struct particles *b, 
+void add_anticipated_compression(float *drho_dt, struct particles *a_adv, struct particles *b_adv, 
     struct neighbors_context *context_b)
 {
     #pragma omp for
-    for(int idx_a = 0; idx_a < a->count; idx_a++){
-        struct particle a_i = particle_at(a, idx_a);
+    for(int idx_a = 0; idx_a < a_adv->count; idx_a++){
+        struct particle a_adv_i = particle_at(a_adv, idx_a);
 
         int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS];
-        int n_neighbors = find_neighbors(neighbors_idxs, a, b, idx_a, context_b);
+        int n_neighbors = find_neighbors(neighbors_idxs, a_adv, b_adv, idx_a, context_b);
 
         // compute parts of the popular formulation of the continuity equation from neighbors
-        float u_ab[MAX_POSSIBLE_NEIGHBORS], v_ab[MAX_POSSIBLE_NEIGHBORS];
+        float u_adv_ab[MAX_POSSIBLE_NEIGHBORS], v_adv_ab[MAX_POSSIBLE_NEIGHBORS];
         for(int k = 0; k < n_neighbors; k++){
             int idx_b = neighbors_idxs[k];
-            struct particle b_j = particle_at(b, idx_b);
+            struct particle b_adv_j = particle_at(b_adv, idx_b);
 
-            u_ab[k] = a_i.u-b_j.u;
-            v_ab[k] = a_i.v-b_j.v;
+            u_adv_ab[k] = a_adv_i.u-b_adv_j.u;
+            v_adv_ab[k] = a_adv_i.v-b_adv_j.v;
         }
 
         // compute the change in density using the SPH divergence
-        float drho_dt_i = sph_divergence(u_ab, v_ab, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
+        float drho_dt_i = sph_divergence(u_adv_ab, v_adv_ab, a_adv, b_adv, idx_a, neighbors_idxs, n_neighbors, MASS);
         drho_dt[idx_a] += drho_dt_i;
     }
 }
@@ -636,13 +857,12 @@ int main(){
             if(in_initial_shape(x_0, y_0)) n_fluid++;
     
     // alloc fluid and derivatives
-    struct particles *fluid, *fluid_pred;
+    struct particles *fluid;
     fluid = alloc_particles(n_fluid);
-    fluid_pred = alloc_particles(n_fluid);
-    float *du_dt_pred = (float*)malloc(n_fluid*sizeof(float)), // momentum and continuity results for predictor step
-          *dv_dt_pred = (float*)malloc(n_fluid*sizeof(float));
-    float *du_dt_corr = (float*)malloc(n_fluid*sizeof(float)), // momentum and continuity results for corrector step
-          *dv_dt_corr = (float*)malloc(n_fluid*sizeof(float));
+    float *du_dt = (float*)malloc(n_fluid*sizeof(float)), // momentum and continuity results for predictor step
+          *dv_dt = (float*)malloc(n_fluid*sizeof(float));
+    float *drho_dt = (float*)malloc(n_fluid*sizeof(float)),
+          *rho_adv = (float*)malloc(n_fluid*sizeof(float));
     
     // initialize fluid particles
     particle_counter = 0;
@@ -655,14 +875,12 @@ int main(){
                 fluid->v[particle_counter] = 0;
                 fluid->m[particle_counter] = M;
                 fluid->rho[particle_counter] = RHO_0;
+                fluid->p[particle_counter] = 0;
 
                 particle_counter++;
             }
         }
     }
-
-    // initialize mass of fluid_pred (will never change again)
-    for(int i = 0; i < n_fluid; i++) fluid_pred->m[i] = M;
 
     // count the number of boundary particles we need
     int n_boundary = 0;
@@ -670,9 +888,8 @@ int main(){
     for(float y_0 = 0; y_0 < HEIGHT; y_0 += R/3) n_boundary += 2;
 
     // alloc boundary particles and derivatives
-    struct particles *boundary, *boundary_pred; 
+    struct particles *boundary; 
     boundary = alloc_particles(n_boundary);
-    boundary_pred = alloc_particles(n_boundary);
 
     // initialize boundary particles velocity and density (velocity will never change)
     for(int i = 0; i < n_boundary; i++){
@@ -698,15 +915,6 @@ int main(){
         particle_counter += 2;
     }
 
-    // boundary_pred x, y, u, and v are the same as boundary but will never be 
-    // updated, so we need to initialize them now
-    for(int i = 0; i < n_boundary; i++){
-        boundary_pred->x[i] = boundary->x[i];
-        boundary_pred->y[i] = boundary->y[i];
-        boundary_pred->u[i] = boundary->u[i];
-        boundary_pred->v[i] = boundary->v[i];
-    }
-
 
     printf("n_fluid = %d\n", n_fluid);
     printf("n_boundary = %d\n", n_boundary);
@@ -720,8 +928,9 @@ int main(){
     update_neighbors_context(ctx_boundary, boundary); // this never needs to be called again, so we'll call it now
 
 
-    calculate_boundary_pseudomass(boundary, ctx_boundary);
-    for(int i = 0; i < n_boundary; i++) boundary_pred->m[i] = boundary->m[i];
+    calculate_boundary_pseudomass(boundary, ctx_boundary); // calculate the boundary pseudomass (will never change)
+
+    struct pressure_context *ctx_pressure = alloc_pressure_context(fluid->count);  // alloc the pressure-solving context
 
 
     struct timespec now; // initialize the time-keeping with the current time
@@ -767,63 +976,72 @@ int main(){
     while(1){
         #pragma omp single
         {
-            // predictor step: initialize the derivative accumulators
+            // predict: initialize the non-pressure derivative accumulators with gravity
             for(int i = 0; i < n_fluid; i++){
-                du_dt_pred[i] = g[0];
-                dv_dt_pred[i] = g[1];
+                du_dt[i] = g[0];
+                dv_dt[i] = g[1];
             }
 
-            // predictor step: update the neighbors search context
+            // predict: update the neighbors search context
             update_neighbors_context(ctx_fluid, fluid);
         }
 
-        // predictor step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
+        // predict: add other accelerations to the derivative accumulators
         calculate_density(fluid, boundary, ctx_fluid, ctx_boundary);
-        calculate_particle_pressure(fluid);
-        calculate_particle_pressure(boundary);
-        add_pressure_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_fluid, ctx_boundary);
-        add_viscosity_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_fluid, ctx_boundary);
+        add_viscosity_acceleration(du_dt, dv_dt, fluid, boundary, ctx_fluid, ctx_boundary);
 
         #pragma omp single
         {
-            // predictor step: get what the particles would be like if we used forward Euler
+            // predict: update JUST the velocities with the so-far predicted accelerations
             for(int i = 0; i < n_fluid; i++){
-                fluid_pred->x[i] = fluid->x[i] + fluid->u[i]*DT;
-                fluid_pred->y[i] = fluid->y[i] + fluid->v[i]*DT;
-                fluid_pred->u[i] = fluid->u[i] + du_dt_pred[i]*DT;
-                fluid_pred->v[i] = fluid->v[i] + dv_dt_pred[i]*DT;
+                fluid->u[i] += du_dt[i]*DT;
+                fluid->v[i] += dv_dt[i]*DT;
             }
 
-            // corrector step: initialize the derivative accumulators
+            // correct: clear the derivative accumulators
             for(int i = 0; i < n_fluid; i++){
-                du_dt_corr[i] = g[0];
-                dv_dt_corr[i] = g[1];
+                du_dt[i] = 0;
+                dv_dt[i] = 0;
             }
-
-            // corrector step: update the neighbors context using the predictor positions
-            update_neighbors_context(ctx_fluid, fluid_pred);
+            
+            // correct: clear the density change accumulator
+            for(int i = 0; i < n_fluid; i++) drho_dt[i] = 0;
         }
 
-        // corrector step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
-        calculate_density(fluid_pred, boundary_pred, ctx_fluid, ctx_boundary);
-        calculate_particle_pressure(fluid_pred);
-        calculate_particle_pressure(boundary_pred);
-        add_pressure_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_fluid, ctx_boundary);
-        add_viscosity_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_fluid, ctx_boundary);
+        // correct: add the anticipated density change (without pressure)
+        add_anticipated_compression(drho_dt, fluid, fluid, ctx_fluid);
+        add_anticipated_compression(drho_dt, fluid, boundary, ctx_boundary);
+        
+        // correct: get rho_adv using the density change accumulator
+        #pragma omp single
+        for(int i = 0; i < n_fluid; i++) rho_adv[i] = fluid->rho[i] + drho_dt[i]*DT;
+
+        // correct: solve for pressure and add pressure acceleration to the derivative accumulators
+        calculate_particle_pressure(fluid, boundary, ctx_fluid, ctx_boundary, rho_adv, ctx_pressure);
+        add_pressure_acceleration(du_dt, dv_dt, fluid, boundary, ctx_fluid, ctx_boundary);
 
         #pragma omp single
         {
-            // corrector step: step forward using the midpoint between the predictor and corrector derivatives
+            // correct: update the velocities
             for(int i = 0; i < n_fluid; i++){
-                fluid->x[i] += 0.5f*(fluid_pred->u[i] + fluid->u[i])*DT;
-                fluid->y[i] += 0.5f*(fluid_pred->v[i] + fluid->v[i])*DT;
-                fluid->u[i] += 0.5f*(du_dt_pred[i] + du_dt_corr[i])*DT;
-                fluid->v[i] += 0.5f*(dv_dt_pred[i] + dv_dt_corr[i])*DT;
+                fluid->u[i] += du_dt[i]*DT;
+                fluid->v[i] += dv_dt[i]*DT;
             }
 
+            // correct: update the positions
+            for(int i = 0; i < n_fluid; i++){
+                fluid->x[i] += fluid->u[i]*DT;
+                fluid->y[i] += fluid->v[i]*DT;
+            }
 
             clock_gettime(CLOCK_MONOTONIC, &now); // take a single timestamp for the below real-time operations
         }
+
+
+        // update density so that the below operations can work correctly
+        #pragma omp single
+        update_neighbors_context(ctx_fluid, fluid);
+        calculate_density(fluid, boundary, ctx_fluid, ctx_boundary);
 
 
         // draw fluid using metaballs
