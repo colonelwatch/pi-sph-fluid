@@ -462,7 +462,7 @@ void calculate_particle_pressure(struct particles *fluid, struct particles *boun
         // printf("rho_avg = %f\n", pressure_ctx->rho_avg);
     }
 
-    for(int l = 0; l < 100 && (fabs((pressure_ctx->rho_avg-RHO_0)/RHO_0) > 0.01 || l < 2); l++){
+    for(int l = 0; l < 100 && ((pressure_ctx->rho_avg-RHO_0)/RHO_0 > 0.001 || l < 2); l++){
         #pragma omp for
         for(int i = 0; i < fluid->count; i++){
             struct particle a_i = particle_at(fluid, i);
@@ -538,7 +538,7 @@ void calculate_particle_pressure(struct particles *fluid, struct particles *boun
             fluid->p[i] = 0.5 * fluid->p[i] + 0.5/pressure_ctx->a_diag[i]*lu_p_i;
 
             // clamp the pressure
-            if(fluid->p[i] < -20000) fluid->p[i] = -20000;
+            if(fluid->p[i] < 0) fluid->p[i] = 0;
         }
 
         // calculate the new density
