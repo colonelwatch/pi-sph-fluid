@@ -549,15 +549,15 @@ int read_file_as_integer(const char *filepath){
 // (init driver with "echo mpu6050 0x68 > /sys/bus/i2c/devices/i2c-1/new_device")
 void get_gravity(float *g_x, float *g_y){
     #ifdef MPU6050
-    int accel_x = read_file_as_integer("/sys/bus/iio/devices/iio:device0/in_accel_x_raw"),
-        accel_y = read_file_as_integer("/sys/bus/iio/devices/iio:device0/in_accel_y_raw"),
-        accel_z = read_file_as_integer("/sys/bus/iio/devices/iio:device0/in_accel_z_raw");
-    float accel_magnitude = sqrt(accel_x*accel_x+accel_y*accel_y+accel_z*accel_z);
-    float normed_accel_x = accel_x/accel_magnitude,
-          normed_accel_y = accel_y/accel_magnitude;
-    *g_x = normed_accel_y*G;
-    *g_y = -normed_accel_x*G;
-    #else
+    // We don't read in_accel_z_raw, which is the direction normal to the screen, but use in_accel_x_raw and 
+    //  in_accel_y_raw as they are. This effectively implements a linear projection of the recorded gravity onto 
+    //  the screen plane.
+    int accel_x_raw = read_file_as_integer("/sys/bus/iio/devices/iio:device0/in_accel_x_raw"),
+        accel_y_raw = read_file_as_integer("/sys/bus/iio/devices/iio:device0/in_accel_y_raw");
+    // transform the raw values into a vector of magnitude being G at most
+    *g_x = (float)accel_y_raw / (1 << 14) * G; // (1 << 14) is about the vector magnitude reported when under gravity
+    *g_y = -(float)accel_x_raw / (1 << 14) * G;
+    #else // if we don't have the MPU6050, just use a constant gravity vector
     *g_x = 0;
     *g_y = -G;
     #endif
