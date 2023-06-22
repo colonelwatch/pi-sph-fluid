@@ -485,33 +485,6 @@ void add_viscosity_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct p
     }
 }
 
-void add_compression_effect(float *drho_dt, struct particles *a, struct particles *b, 
-    struct neighbors_context *context_b)
-{
-    int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
-    float u_ab[MAX_POSSIBLE_NEIGHBORS], v_ab[MAX_POSSIBLE_NEIGHBORS];
-    
-    #pragma omp for
-    for(int idx_a = 0; idx_a < a->count; idx_a++){
-        struct particle a_i = particle_at(a, idx_a);
-
-        n_neighbors = find_neighbors(neighbors_idxs, a, b, idx_a, context_b);
-
-        // compute parts of the popular formulation of the continuity equation from neighbors
-        for(int k = 0; k < n_neighbors; k++){
-            int idx_b = neighbors_idxs[k];
-            struct particle b_j = particle_at(b, idx_b);
-
-            u_ab[k] = a_i.u-b_j.u;
-            v_ab[k] = a_i.v-b_j.v;
-        }
-
-        // compute the change in density using the SPH divergence
-        float drho_dt_i = sph_divergence(u_ab, v_ab, a, b, idx_a, neighbors_idxs, n_neighbors, MASS);
-        drho_dt[idx_a] += drho_dt_i;
-    }
-}
-
 
 // METABALLS
 // See Wikipedia article and original Blinn 1982 paper on metaballs. This function follows from the original derivation 
