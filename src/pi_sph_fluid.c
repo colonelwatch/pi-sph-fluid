@@ -142,7 +142,7 @@ void append_element(struct linked_list *list, struct linked_list_element *new_el
 //  support" (here, W_ab = 0 when euclid_dist() > some number), only a few nearby particles contribute to the particle 
 //  approximation of the integral interpolant. This obviously means less operations to do, but implementations 
 //  also recognize that finding these nearby particles in the first place could be done more efficiently.
-// Here we'll use the linked-list method (mentions in Monaghan 1992 and PySPH). Our kernel's support is a circle of 
+// Here we'll use the linked-list method (mentions in Monaghan 1994 and PySPH). Our kernel's support is a circle of 
 //  radius 2*H. Therefore, if a particle falls in some cell of a grid of length 2*H, all possible neighbors are in that 
 //  cell and neighboring cells. For each cell, an associated linked list holds the indices of the particles that fall 
 //  in it.
@@ -313,7 +313,7 @@ float sph_divergence(float *quantity_x, float *quantity_y, struct particles *a, 
 
 
 // MAIN FUNCTIONS
-// These functions are responsible for principal parts of the fluid simulation. Exact implementation of Monaghan 1992 
+// These functions are responsible for principal parts of the fluid simulation. Exact implementation of Monaghan 1994 
 //  to the best of my ability with the exception of leaving artificial viscosity on all the time
 
 // To start, arrange the SPH particles as a circle in the middle of the domain
@@ -364,7 +364,7 @@ void calculate_density(struct particles *fluid, struct particles *boundary, stru
 // "slighly compressible" SPH, or weakly-compressible SPH (WCSPH) expresses pressure as an explicit function of density,
 //  not an implicit one needing an iterative solver. Sometimes doesn't use the true speed of sound in a fluid, and
 //  rather uses some number high enough that the density doesn't vary by too many percents. That's also how I did it
-//  here because I saw that using the true speed caused instability. See Monaghan 1992 or Monaghan 2005.
+//  here because I saw that using the true speed caused instability. See Monaghan 1994 or Monaghan 2005.
 void calculate_particle_pressure(struct particles *particles){
     #pragma omp for
     for(int i = 0; i < particles->count; i++){
