@@ -488,15 +488,16 @@ void add_viscosity_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct p
 void add_compression_effect(float *drho_dt, struct particles *a, struct particles *b, 
     struct neighbors_context *context_b)
 {
+    int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+    float u_ab[MAX_POSSIBLE_NEIGHBORS], v_ab[MAX_POSSIBLE_NEIGHBORS];
+    
     #pragma omp for
     for(int idx_a = 0; idx_a < a->count; idx_a++){
         struct particle a_i = particle_at(a, idx_a);
 
-        int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS];
-        int n_neighbors = find_neighbors(neighbors_idxs, a, b, idx_a, context_b);
+        n_neighbors = find_neighbors(neighbors_idxs, a, b, idx_a, context_b);
 
         // compute parts of the popular formulation of the continuity equation from neighbors
-        float u_ab[MAX_POSSIBLE_NEIGHBORS], v_ab[MAX_POSSIBLE_NEIGHBORS];
         for(int k = 0; k < n_neighbors; k++){
             int idx_b = neighbors_idxs[k];
             struct particle b_j = particle_at(b, idx_b);
@@ -520,6 +521,8 @@ void add_compression_effect(float *drho_dt, struct particles *a, struct particle
 void draw_metaballs(unsigned char *draw_buffer, struct particles *pixel_pseudoparticles, struct particles *fluid, 
     struct neighbors_context *ctx_fluid)
 {
+    int contributing_particles[MAX_POSSIBLE_NEIGHBORS], n_contributing_particles;
+    
     #pragma omp for collapse(2)
     for(int i = 0; i < 64; i++){
         for(int j = 0; j < 128; j++){
@@ -527,8 +530,7 @@ void draw_metaballs(unsigned char *draw_buffer, struct particles *pixel_pseudopa
                     pixel_y = pixel_pseudoparticles->y[i*128+j];
             int ij = i*128+j;
 
-            int contributing_particles[MAX_POSSIBLE_NEIGHBORS];
-            int n_contributing_particles = find_neighbors(contributing_particles, pixel_pseudoparticles, fluid, ij, ctx_fluid);
+            n_contributing_particles = find_neighbors(contributing_particles, pixel_pseudoparticles, fluid, ij, ctx_fluid);
 
             float metaball_condition = 0;
             for(int k = 0; k < n_contributing_particles; k++){
