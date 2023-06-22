@@ -446,7 +446,7 @@ void calculate_particle_pressure(struct particles *fluid, struct particles *boun
             d_diag_minus_d_neighbors_y, fluid, fluid, i, neighbors_idxs, 
             n_neighbors, MASS);
         
-        pressure_ctx->a_diag[i] = (a_diag_i < -1e-3) ? a_diag_i : -1e-3;
+        pressure_ctx->a_diag[i] = a_diag_i - 1e-5; // add a small value, like in the PCISPH paper?
     }
 
     // before iterating, set the pressure to half of what it was before in order to implement a warm start
