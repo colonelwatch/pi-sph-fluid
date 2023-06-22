@@ -648,9 +648,8 @@ int main(){
     for(float y_0 = 0; y_0 < HEIGHT; y_0 += R) n_boundary += 2;
 
     // alloc boundary particles and derivatives
-    struct particles *boundary, *boundary_pred; 
+    struct particles *boundary; 
     boundary = alloc_particles(n_boundary);
-    boundary_pred = alloc_particles(n_boundary);
 
     // initialize boundary particles velocity and density (velocity will never change)
     for(int i = 0; i < n_boundary; i++){
@@ -676,15 +675,6 @@ int main(){
         particle_counter += 2;
     }
 
-    // boundary_pred x, y, u, and v are the same as boundary but will never be 
-    // updated, so we need to initialize them now
-    for(int i = 0; i < n_boundary; i++){
-        boundary_pred->x[i] = boundary->x[i];
-        boundary_pred->y[i] = boundary->y[i];
-        boundary_pred->u[i] = boundary->u[i];
-        boundary_pred->v[i] = boundary->v[i];
-    }
-
 
     printf("n_fluid = %d\n", n_fluid);
     printf("n_boundary = %d\n", n_boundary);
@@ -695,11 +685,10 @@ int main(){
     struct neighbors_context *ctx_fluid, *ctx_boundary;
     ctx_fluid = initialize_neighbors_context(fluid->count, x_min, x_max, y_min, y_max, 2*H);
     ctx_boundary = initialize_neighbors_context(boundary->count, x_min, x_max, y_min, y_max, 2*H);
+
+
     update_neighbors_context(ctx_boundary, boundary); // this never needs to be called again, so we'll call it now
-
-
     calculate_boundary_pseudomass(boundary, ctx_boundary);
-    for(int i = 0; i < n_boundary; i++) boundary_pred->m[i] = boundary->m[i];
 
 
     struct timespec now; // initialize the time-keeping with the current time
@@ -758,7 +747,6 @@ int main(){
         // predictor step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
         calculate_density(fluid, boundary, ctx_fluid, ctx_boundary);
         calculate_particle_pressure(fluid);
-        calculate_particle_pressure(boundary);
         add_pressure_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_fluid, ctx_boundary);
         add_viscosity_acceleration(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_fluid, ctx_boundary);
 
@@ -783,11 +771,10 @@ int main(){
         }
 
         // corrector step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
-        calculate_density(fluid_pred, boundary_pred, ctx_fluid, ctx_boundary);
+        calculate_density(fluid_pred, boundary, ctx_fluid, ctx_boundary);
         calculate_particle_pressure(fluid_pred);
-        calculate_particle_pressure(boundary_pred);
-        add_pressure_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_fluid, ctx_boundary);
-        add_viscosity_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary_pred, ctx_fluid, ctx_boundary);
+        add_pressure_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary, ctx_fluid, ctx_boundary);
+        add_viscosity_acceleration(du_dt_corr, dv_dt_corr, fluid_pred, boundary, ctx_fluid, ctx_boundary);
 
         #pragma omp single
         {
