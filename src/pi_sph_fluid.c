@@ -396,7 +396,10 @@ void add_pressure_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct pa
             int idx_b = neighbors_idxs[k];
             struct particle b_j = particle_at(fluid, idx_b);
 
-            pressure_i[k] = -( a_i.p/(a_i.rho*a_i.rho) + b_j.p/(b_j.rho*b_j.rho) );
+            float q = euclid_dist(a_i.x, a_i.y, b_j.x, b_j.y)/H;
+            float artifical_pressure = 0.1*powf(W(q)/W(0.2*H), 4); // mentioned by Macklin 2013 "Position Based Fluids"
+
+            pressure_i[k] = -( a_i.p/(a_i.rho*a_i.rho) + b_j.p/(b_j.rho*b_j.rho) + artifical_pressure);
         }
 
         // compute the acceleration due to pressure using the SPH gradient
@@ -537,7 +540,7 @@ void draw_metaballs(unsigned char *draw_buffer, struct particles *pixel_pseudopa
                 float q = distance/H;
 
                 float unnormalizing_factor = (4*M_PI*H*H)/7;
-                float new_normalizing_factor = 0.75;
+                float new_normalizing_factor = 1.0;
                 metaball_condition += new_normalizing_factor*unnormalizing_factor*W(q);
 
                 if(metaball_condition >= 1) break;
