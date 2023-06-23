@@ -281,30 +281,6 @@ float2 sph_gradient(float *quantity, struct particles *particles_a, struct parti
     return grad_quantity;
 }
 
-float sph_divergence(float *quantity_x, float *quantity_y, struct particles *particles_a, struct particles *particles_b, 
-    int i, int *j_neighbors, int n_neighbors, enum leading_factor leading_factor)
-{
-    float x_i = particles_a->x[i], y_i = particles_b->y[i];
-
-    float div_quantity = 0;
-    for(int k = 0; k < n_neighbors; k++){
-        int j = j_neighbors[k];
-
-        float x_j = particles_b->x[j], y_j = particles_b->y[j];
-        float m_j = particles_b->m[j];
-        float rho_j = particles_b->rho[j];
-
-        float2 grad_i_W_ij = grad_a_W_ab(x_i, y_i, x_j, y_j);
-        float leading_factor_j = (leading_factor == MASS)? m_j : m_j/rho_j;
-
-        float quantity_dot_grad = quantity_x[k]*grad_i_W_ij.x + quantity_y[k]*grad_i_W_ij.y;
-
-        div_quantity += leading_factor_j*quantity_dot_grad;
-    }
-
-    return div_quantity;
-}
-
 
 // MAIN FUNCTIONS
 // These functions are responsible for principal parts of the fluid simulation. Exact implementation of Monaghan 1994 
