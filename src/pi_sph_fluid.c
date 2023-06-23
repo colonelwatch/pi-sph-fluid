@@ -234,7 +234,7 @@ int find_neighbors(int *j_neighbors, struct particles *particles_a, struct parti
 // SPH APPROXIMATIONS
 // Contained implementations of the SPH approximation, integrating all of the above
 
-enum leading_factor { MASS, VOLUME, ONE }; // fundamental SPH approx uses volume, but most derived invocations use mass
+enum leading_factor { MASS, VOLUME }; // fundamental SPH approx uses volume, but most derived invocations use mass
 
 float sph(float *quantity, struct particles *particles_a, struct particles *particles_b, int i, int *j_neighbors, 
     int n_neighbors, enum leading_factor leading_factor)
@@ -249,16 +249,8 @@ float sph(float *quantity, struct particles *particles_a, struct particles *part
         float m_j = particles_b->m[j];
         float rho_j = particles_b->rho[j];
 
-        float q = euclid_dist(x_i, y_i, x_j, y_j) / H;
-        float W_ij = W(q);
-
-        float leading_factor_j;
-        switch(leading_factor){
-            case MASS:      leading_factor_j = m_j;             break;
-            case VOLUME:    leading_factor_j = m_j / rho_j;     break;
-            case ONE:       leading_factor_j = 1;               break; // TODO: ONE is a hack to implement Akinci 2012
-            default:        leading_factor_j = -1;              break; // this should never happen
-        }
+        float W_ij = W(euclid_dist(x_i, y_i, x_j, y_j) / H);
+        float leading_factor_j = (leading_factor == MASS)? m_j : m_j/rho_j;
 
         sph_quantity += leading_factor_j * quantity[k] * W_ij;
     }
@@ -324,17 +316,26 @@ int in_initial_shape(float x, float y){
 }
 
 void calculate_boundary_pseudomass(struct particles *boundary, struct neighbors_context *ctx_boundary){
-    static float ones[MAX_POSSIBLE_NEIGHBORS] = {1, 1, 1, 1, 1, 1, 1, 1, 
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     int j_neighbors[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
 
     #pragma omp for
     for(int i = 0; i < boundary->count; i++){
+        float x_i = boundary->x[i], y_i = boundary->y[i];
+        
         n_neighbors = find_neighbors(j_neighbors, boundary, boundary, i, ctx_boundary);
 
-        float recip_volume = sph(ones, boundary, boundary, i, j_neighbors, n_neighbors, ONE);
+        // the reciprocal volume calculation doesn't exactly fit typical SPH, so we'll implement it manually
+        float recip_volume = 0;
+        for(int k = 0; k < n_neighbors; k++){
+            int j = j_neighbors[k];
+
+            float x_j = boundary->x[j], y_j = boundary->y[j];
+
+            recip_volume += W(euclid_dist(x_i, y_i, x_j, y_j) / H);
+        }
+
         float m_i = boundary->rho[i] / recip_volume;
+
         boundary->m[i] = m_i;
     }
 }
