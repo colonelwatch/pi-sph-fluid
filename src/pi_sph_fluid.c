@@ -16,7 +16,6 @@
 #define G 9.81f          // m/s^2, gravitational acceleration
 
 #define V (0.83*H*H) // m^3, volume of each fluidparticle
-#define M (RHO_0*V) // kg, mass of each fluid particle
 #define MAX_POSSIBLE_NEIGHBORS 48 // the sum of the first three hexagonal numbers is 22, so this should be enough
 
 
@@ -55,12 +54,12 @@ struct particles* alloc_particles(int n_particles){
 }
 
 // Helper function for pulling an individual particle out of the struct of arrays
-struct particle particle_at(struct particles *particles, int idx){
+struct particle particle_at(struct particles *particles, int i){
     return (struct particle){
-        .x = particles->x[idx], .y = particles->y[idx], .u = particles->u[idx], .v = particles->v[idx],
-        .m = particles->m[idx],
-        .rho = particles->rho[idx],
-        .p = particles->p[idx]
+        .x = particles->x[i], .y = particles->y[i], .u = particles->u[i], .v = particles->v[i],
+        .m = particles->m[i],
+        .rho = particles->rho[i],
+        .p = particles->p[i]
     };
 }
 
@@ -75,9 +74,9 @@ typedef struct { float x, y; } float2;
 //  the particle approximation) along with its derivative, using the coordinates of particles a and b as arguments
 // Ex: W_ab = W( euclid_dist() / H )    and    grad_a W_ab = ( dW_dq() * dq_dx_a(), dW_dq() * dq_dy_a() )
 
-float euclid_dist(float x_a, float y_a, float x_b, float y_b){
-    float x_ab = x_a-x_b, y_ab = y_a-y_b;
-    return sqrt(x_ab*x_ab+y_ab*y_ab);
+float euclid_dist(float x_i, float y_i, float x_j, float y_j){
+    float x_ij = x_i-x_j, y_ij = y_i-y_j;
+    return sqrt(x_ij*x_ij+y_ij*y_ij);
 }
 
 float W(float q){
@@ -92,22 +91,22 @@ float dW_dq(float q){
     return normalizing_factor*(-5)*q*pow(tmp, 3); // Wendland C2 kernel
 }
 
-float dq_dx_a(float x_a, float y_a, float x_b, float y_b){
-    return (x_a-x_b)/euclid_dist(x_a, y_a, x_b, y_b)/H;
+float dq_dx_a(float x_i, float y_i, float x_j, float y_j){
+    return (x_i-x_j)/euclid_dist(x_i, y_i, x_j, y_j)/H;
 }
 
-float dq_dy_a(float x_a, float y_a, float x_b, float y_b){
-    return (y_a-y_b)/euclid_dist(x_a, y_a, x_b, y_b)/H;
+float dq_dy_a(float x_i, float y_i, float x_j, float y_j){
+    return (y_i-y_j)/euclid_dist(x_i, y_i, x_j, y_j)/H;
 }
 
-float2 grad_a_W_ab(float x_a, float y_a, float x_b, float y_b){
-    float q = euclid_dist(x_a, y_a, x_b, y_b)/H;
+float2 grad_a_W_ab(float x_i, float y_i, float x_j, float y_j){
+    float q = euclid_dist(x_i, y_i, x_j, y_j)/H;
 
-    float dW_dq_val = dW_dq(q);
-    float dq_dx_a_val = dq_dx_a(x_a, y_a, x_b, y_b);
-    float dq_dy_a_val = dq_dy_a(x_a, y_a, x_b, y_b);
+    float dW_dq_ij = dW_dq(q);
+    float dq_dx_a_ij = dq_dx_a(x_i, y_i, x_j, y_j);
+    float dq_dy_a_ij = dq_dy_a(x_i, y_i, x_j, y_j);
 
-    return (float2){ .x = dW_dq_val*dq_dx_a_val, .y = dW_dq_val*dq_dy_a_val };
+    return (float2){ .x = dW_dq_ij*dq_dx_a_ij, .y = dW_dq_ij*dq_dy_a_ij };
 }
 
 
@@ -159,64 +158,67 @@ struct neighbors_context{
 struct neighbors_context *initialize_neighbors_context(int n_particles, float x_min, float x_max, float y_min, 
     float y_max, float cell_length)
 {
-    struct neighbors_context *context = (struct neighbors_context*)malloc(sizeof(struct neighbors_context));
+    struct neighbors_context *ctx = (struct neighbors_context*)malloc(sizeof(struct neighbors_context));
     
-    context->x_min = x_min;
-    context->x_max = x_max;
-    context->y_min = y_min;
-    context->y_max = y_max;
-    context->cell_length = cell_length;
+    ctx->x_min = x_min;
+    ctx->x_max = x_max;
+    ctx->y_min = y_min;
+    ctx->y_max = y_max;
+    ctx->cell_length = cell_length;
 
-    context->n_cells = (int)((y_max-y_min)/cell_length)+1;
-    context->m_cells = (int)((x_max-x_min)/cell_length)+1;
-    context->cells = (struct linked_list*)malloc(context->n_cells * context->m_cells * sizeof(struct linked_list));
+    ctx->n_cells = (int)((y_max-y_min)/cell_length)+1;
+    ctx->m_cells = (int)((x_max-x_min)/cell_length)+1;
+    ctx->cells = (struct linked_list*)malloc(ctx->n_cells * ctx->m_cells * sizeof(struct linked_list));
     
-    context->n_particles = n_particles;
-    context->cells_elements = (struct linked_list_element*)malloc(n_particles*sizeof(struct linked_list_element));
-    for(int k = 0; k < n_particles; k++)
-        context->cells_elements[k] = (struct linked_list_element){ .idx = k, .next = NULL };
+    ctx->n_particles = n_particles;
+    ctx->cells_elements = (struct linked_list_element*)malloc(n_particles*sizeof(struct linked_list_element));
+    for(int i = 0; i < n_particles; i++)
+        ctx->cells_elements[i] = (struct linked_list_element){ .idx = i, .next = NULL };
     
-    return context;
+    return ctx;
 }
 
-void update_neighbors_context(struct neighbors_context *context, struct particles *particles){
+void update_neighbors_context(struct neighbors_context *ctx, struct particles *particles){
     // reset the linked lists (note that this doesn't orphan the elements)
-    for(int ij = 0; ij < context->n_cells * context->m_cells; ij++)
-        context->cells[ij] = (struct linked_list){ .head = NULL, .tail = NULL };
+    for(int ij_cell = 0; ij_cell < ctx->n_cells * ctx->m_cells; ij_cell++)
+        ctx->cells[ij_cell] = (struct linked_list){ .head = NULL, .tail = NULL };
 
     // for each particle, infer the cell it falls in
-    for(int k = 0; k < particles->count; k++){
-        int i = (int)((particles->y[k] - context->y_min) / context->cell_length);
-        int j = (int)((particles->x[k] - context->x_min) / context->cell_length);
-        int ij = i * context->m_cells + j;
+    for(int i = 0; i < particles->count; i++){
+        int i_cell = (int)((particles->y[i] - ctx->y_min) / ctx->cell_length);
+        int j_cell = (int)((particles->x[i] - ctx->x_min) / ctx->cell_length);
+        int ij_cell = i_cell * ctx->m_cells + j_cell;
 
-        append_element(&context->cells[ij], &context->cells_elements[k]);
+        append_element(&ctx->cells[ij_cell], &ctx->cells_elements[i]);
     }
 }
 
-int find_neighbors(int *neighbors_idxs, struct particles *a, struct particles *b, int idx_a, 
-    struct neighbors_context *context_b)
+int find_neighbors(int *j_neighbors, struct particles *particles_a, struct particles *particles_b, int i, 
+    struct neighbors_context *ctx_b)
 {
-    int ignore_self_interaction = (a != b); // if a == b (equal ptrs), we need to reject the particle neighboring itself
+    // if a == b (equal ptrs), we need to reject the particle neighboring itself
+    int ignore_self_interaction = (particles_a != particles_b);
 
     // Out of the neighboring cells AND the cell the particle falls in, find the real neighbors
     int neighbors_counter = 0;
-    float x_a = a->x[idx_a], y_a = a->y[idx_a];
-    int i_a = (int)((y_a - context_b->y_min) / context_b->cell_length),
-        j_a = (int)((x_a - context_b->x_min) / context_b->cell_length);
-    for(int i = i_a-1; i <= i_a+1; i++){
-        for(int j = j_a-1; j <= j_a+1; j++){
-            if(i < 0 || i >= context_b->n_cells || j < 0 || j >= context_b->m_cells)
+    float x_i = particles_a->x[i], y_i = particles_a->y[i];
+    
+    int i_cell_center = (int)((y_i - ctx_b->y_min) / ctx_b->cell_length),
+        j_cell_center = (int)((x_i - ctx_b->x_min) / ctx_b->cell_length);
+    for(int i_cell = i_cell_center-1; i_cell <= i_cell_center+1; i_cell++){
+        for(int j_cell = j_cell_center-1; j_cell <= j_cell_center+1; j_cell++){
+            if(i_cell < 0 || i_cell >= ctx_b->n_cells || j_cell < 0 || j_cell >= ctx_b->m_cells)
                 continue;
             
-            int ij = i * context_b->m_cells + j;
-            struct linked_list_element *current_element = context_b->cells[ij].head;
-            while(current_element != NULL){
-                int idx_b = current_element->idx;
-                float x_b = b->x[idx_b], y_b = b->y[idx_b];
+            int ij_cell = i_cell * ctx_b->m_cells + j_cell;
 
-                if(euclid_dist(x_a, y_a, x_b, y_b) < 2*H && (ignore_self_interaction || idx_a != idx_b)){
-                    neighbors_idxs[neighbors_counter] = idx_b;
+            struct linked_list_element *current_element = ctx_b->cells[ij_cell].head;
+            while(current_element != NULL){
+                int j = current_element->idx;
+                float x_j = particles_b->x[j], y_j = particles_b->y[j];
+
+                if(euclid_dist(x_i, y_i, x_j, y_j) < 2*H && (ignore_self_interaction || i != j)){
+                    j_neighbors[neighbors_counter] = j;
                     neighbors_counter++;
                 }
                 
@@ -234,76 +236,76 @@ int find_neighbors(int *neighbors_idxs, struct particles *a, struct particles *b
 
 enum leading_factor { MASS, VOLUME, ONE }; // fundamental SPH approx uses volume, but most derived invocations use mass
 
-float sph(float *quantity, struct particles *a, struct particles *b, int idx_a, int *idxs_b, int n_idxs_b,
-    enum leading_factor leading_factor)
+float sph(float *quantity, struct particles *particles_a, struct particles *particles_b, int i, int *j_neighbors, 
+    int n_neighbors, enum leading_factor leading_factor)
 {
-    float x_a = a->x[idx_a], y_a = a->y[idx_a];
+    float x_i = particles_a->x[i], y_i = particles_a->y[i];
 
     float sph_quantity = 0;
-    for(int k = 0; k < n_idxs_b; k++){
-        int j = idxs_b[k]; // j is traditionally the index of the neighbor particle
+    for(int k = 0; k < n_neighbors; k++){
+        int j = j_neighbors[k]; // j is traditionally the index of the neighbor particle
 
-        float x_b = b->x[j], y_b = b->y[j];
-        float m_b = b->m[j];
-        float rho_b = b->rho[j];
+        float x_j = particles_b->x[j], y_j = particles_b->y[j];
+        float m_j = particles_b->m[j];
+        float rho_j = particles_b->rho[j];
 
-        float q = euclid_dist(x_a, y_a, x_b, y_b) / H;
-        float W_ab_ij = W(q);
+        float q = euclid_dist(x_i, y_i, x_j, y_j) / H;
+        float W_ij = W(q);
 
         float leading_factor_j;
         switch(leading_factor){
-            case MASS:      leading_factor_j = m_b;             break;
-            case VOLUME:    leading_factor_j = m_b / rho_b;     break;
+            case MASS:      leading_factor_j = m_j;             break;
+            case VOLUME:    leading_factor_j = m_j / rho_j;     break;
             case ONE:       leading_factor_j = 1;               break; // TODO: ONE is a hack to implement Akinci 2012
             default:        leading_factor_j = -1;              break; // this should never happen
         }
 
-        sph_quantity += leading_factor_j * quantity[k] * W_ab_ij;
+        sph_quantity += leading_factor_j * quantity[k] * W_ij;
     }
 
     return sph_quantity;
 }
 
-float2 sph_gradient(float *quantity, struct particles *a, struct particles *b, int idx_a, int *idxs_b, int n_idxs_b,
-    enum leading_factor leading_factor)
+float2 sph_gradient(float *quantity, struct particles *particles_a, struct particles *particles_b, int i, 
+    int *j_neighbors, int n_neighbors, enum leading_factor leading_factor)
 {
-    float x_a = a->x[idx_a], y_a = a->y[idx_a];
+    float x_i = particles_a->x[i], y_i = particles_a->y[i];
     
     float2 grad_quantity = (float2){ .x = 0, .y = 0 };
-    for(int k = 0; k < n_idxs_b; k++){
-        int j = idxs_b[k];
+    for(int k = 0; k < n_neighbors; k++){
+        int j = j_neighbors[k];
 
-        float x_b = b->x[j], y_b = b->y[j];
-        float m_b = b->m[j];
-        float rho_b = b->rho[j];
+        float x_j = particles_b->x[j], y_j = particles_b->y[j];
+        float m_j = particles_b->m[j];
+        float rho_j = particles_b->rho[j];
 
-        float2 grad_a_W_ab_ij = grad_a_W_ab(x_a, y_a, x_b, y_b);
-        float leading_factor_j = (leading_factor == MASS)? m_b : m_b/rho_b;
+        float2 grad_i_W_ij = grad_a_W_ab(x_i, y_i, x_j, y_j);
+        float leading_factor_j = (leading_factor == MASS)? m_j : m_j/rho_j;
 
-        grad_quantity.x += leading_factor_j*quantity[k]*grad_a_W_ab_ij.x;
-        grad_quantity.y += leading_factor_j*quantity[k]*grad_a_W_ab_ij.y;
+        grad_quantity.x += leading_factor_j*quantity[k]*grad_i_W_ij.x;
+        grad_quantity.y += leading_factor_j*quantity[k]*grad_i_W_ij.y;
     }
 
     return grad_quantity;
 }
 
-float sph_divergence(float *quantity_x, float *quantity_y, struct particles *a, struct particles *b, int idx_a, 
-    int *idxs_b, int n_idxs_b, enum leading_factor leading_factor)
+float sph_divergence(float *quantity_x, float *quantity_y, struct particles *particles_a, struct particles *particles_b, 
+    int i, int *j_neighbors, int n_neighbors, enum leading_factor leading_factor)
 {
-    float x_a = a->x[idx_a], y_a = a->y[idx_a];
+    float x_i = particles_a->x[i], y_i = particles_b->y[i];
 
     float div_quantity = 0;
-    for(int k = 0; k < n_idxs_b; k++){
-        int j = idxs_b[k];
+    for(int k = 0; k < n_neighbors; k++){
+        int j = j_neighbors[k];
 
-        float x_b = b->x[j], y_b = b->y[j];
-        float m_b = b->m[j];
-        float rho_b = b->rho[j];
+        float x_j = particles_b->x[j], y_j = particles_b->y[j];
+        float m_j = particles_b->m[j];
+        float rho_j = particles_b->rho[j];
 
-        float2 grad_a_W_ab_ij = grad_a_W_ab(x_a, y_a, x_b, y_b);
-        float leading_factor_j = (leading_factor == MASS)? m_b : m_b/rho_b;
+        float2 grad_i_W_ij = grad_a_W_ab(x_i, y_i, x_j, y_j);
+        float leading_factor_j = (leading_factor == MASS)? m_j : m_j/rho_j;
 
-        float quantity_dot_grad = quantity_x[k]*grad_a_W_ab_ij.x + quantity_y[k]*grad_a_W_ab_ij.y;
+        float quantity_dot_grad = quantity_x[k]*grad_i_W_ij.x + quantity_y[k]*grad_i_W_ij.y;
 
         div_quantity += leading_factor_j*quantity_dot_grad;
     }
@@ -325,13 +327,13 @@ void calculate_boundary_pseudomass(struct particles *boundary, struct neighbors_
     static float ones[MAX_POSSIBLE_NEIGHBORS] = {1, 1, 1, 1, 1, 1, 1, 1, 
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
-    int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+    int j_neighbors[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
 
     #pragma omp for
     for(int i = 0; i < boundary->count; i++){
-        n_neighbors = find_neighbors(neighbors_idxs, boundary, boundary, i, ctx_boundary);
+        n_neighbors = find_neighbors(j_neighbors, boundary, boundary, i, ctx_boundary);
 
-        float recip_volume = sph(ones, boundary, boundary, i, neighbors_idxs, n_neighbors, ONE);
+        float recip_volume = sph(ones, boundary, boundary, i, j_neighbors, n_neighbors, ONE);
         float m_i = boundary->rho[i] / recip_volume;
         boundary->m[i] = m_i;
     }
@@ -343,19 +345,19 @@ void calculate_density(struct particles *fluid, struct particles *boundary, stru
     static float ones[MAX_POSSIBLE_NEIGHBORS] = {1, 1, 1, 1, 1, 1, 1, 1, 
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
-    int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+    int j_neighbors[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
 
     #pragma omp for
     for(int i = 0; i < fluid->count; i++){
         float rho_i = 1.293; // init with a small arbitrary val (chose air density) to avoid div-by-zero
         
         // fluid contribution to density of fluid
-        n_neighbors = find_neighbors(neighbors_idxs, fluid, fluid, i, ctx_fluid);
-        rho_i += sph(ones, fluid, fluid, i, neighbors_idxs, n_neighbors, MASS);
+        n_neighbors = find_neighbors(j_neighbors, fluid, fluid, i, ctx_fluid);
+        rho_i += sph(ones, fluid, fluid, i, j_neighbors, n_neighbors, MASS);
 
         // boundary contribution to density of fluid
-        n_neighbors = find_neighbors(neighbors_idxs, fluid, boundary, i, ctx_boundary);
-        rho_i += sph(ones, fluid, boundary, i, neighbors_idxs, n_neighbors, MASS);
+        n_neighbors = find_neighbors(j_neighbors, fluid, boundary, i, ctx_boundary);
+        rho_i += sph(ones, fluid, boundary, i, j_neighbors, n_neighbors, MASS);
 
         fluid->rho[i] = rho_i;
     }
@@ -378,110 +380,110 @@ void calculate_particle_pressure(struct particles *particles){
 void add_pressure_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct particles *fluid, 
     struct particles *boundary, struct neighbors_context *ctx_fluid, struct neighbors_context *ctx_boundary)
 {
-    int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+    int j_neighbors[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
     float pressure_i[MAX_POSSIBLE_NEIGHBORS];
     float2 pressure_grad_i;
     
     #pragma omp for
-    for(int idx_a = 0; idx_a < fluid->count; idx_a++){
-        struct particle a_i = particle_at(fluid, idx_a);       
+    for(int i = 0; i < fluid->count; i++){
+        struct particle fluid_i = particle_at(fluid, i);
          
         float du_dt_fluid_i = 0, dv_dt_fluid_i = 0;
 
         // fluid contribution to pressure acceleration of fluid
-        n_neighbors = find_neighbors(neighbors_idxs, fluid, fluid, idx_a, ctx_fluid);
+        n_neighbors = find_neighbors(j_neighbors, fluid, fluid, i, ctx_fluid);
 
         // compute parts of the momentum-conserving pressure from neighbors
         for(int k = 0; k < n_neighbors; k++){
-            int idx_b = neighbors_idxs[k];
-            struct particle b_j = particle_at(fluid, idx_b);
+            int j = j_neighbors[k];
+            struct particle fluid_j = particle_at(fluid, j);
 
-            float q = euclid_dist(a_i.x, a_i.y, b_j.x, b_j.y)/H;
+            float q = euclid_dist(fluid_i.x, fluid_i.y, fluid_j.x, fluid_j.y)/H;
             float artifical_pressure = 0.1*powf(W(q)/W(0.2*H), 4); // mentioned by Macklin 2013 "Position Based Fluids"
 
-            pressure_i[k] = -( a_i.p/(a_i.rho*a_i.rho) + b_j.p/(b_j.rho*b_j.rho) + artifical_pressure);
+            pressure_i[k] = -( fluid_i.p/(fluid_i.rho*fluid_i.rho) + fluid_j.p/(fluid_j.rho*fluid_j.rho) + artifical_pressure);
         }
 
         // compute the acceleration due to pressure using the SPH gradient
-        pressure_grad_i = sph_gradient(pressure_i, fluid, fluid, idx_a, neighbors_idxs, n_neighbors, MASS);
+        pressure_grad_i = sph_gradient(pressure_i, fluid, fluid, i, j_neighbors, n_neighbors, MASS);
         du_dt_fluid_i += pressure_grad_i.x;
         dv_dt_fluid_i += pressure_grad_i.y;
 
         // boundary contribution to pressure acceleration of fluid
-        n_neighbors = find_neighbors(neighbors_idxs, fluid, boundary, idx_a, ctx_boundary);
+        n_neighbors = find_neighbors(j_neighbors, fluid, boundary, i, ctx_boundary);
 
-        for(int k = 0; k < n_neighbors; k++) pressure_i[k] = -a_i.p/(a_i.rho*a_i.rho);
+        for(int k = 0; k < n_neighbors; k++) pressure_i[k] = -fluid_i.p/(fluid_i.rho*fluid_i.rho);
 
-        pressure_grad_i = sph_gradient(pressure_i, fluid, boundary, idx_a, neighbors_idxs, n_neighbors, MASS);
+        pressure_grad_i = sph_gradient(pressure_i, fluid, boundary, i, j_neighbors, n_neighbors, MASS);
         du_dt_fluid_i += pressure_grad_i.x;
         dv_dt_fluid_i += pressure_grad_i.y;
 
-        du_dt_fluid[idx_a] += du_dt_fluid_i;
-        dv_dt_fluid[idx_a] += dv_dt_fluid_i;
+        du_dt_fluid[i] += du_dt_fluid_i;
+        dv_dt_fluid[i] += dv_dt_fluid_i;
     }
 }
 
 void add_viscosity_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct particles *fluid, 
     struct particles *boundary, struct neighbors_context *ctx_fluid, struct neighbors_context *ctx_boundary)
 {
-    int neighbors_idxs[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+    int j_neighbors[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
     float viscosity_i[MAX_POSSIBLE_NEIGHBORS];
     float2 viscosity_grad_i;
     
     #pragma omp for
-    for(int idx_a = 0; idx_a < fluid->count; idx_a++){
-        struct particle a_i = particle_at(fluid, idx_a);       
+    for(int i = 0; i < fluid->count; i++){
+        struct particle fluid_i = particle_at(fluid, i);       
          
         float du_dt_fluid_i = 0, dv_dt_fluid_i = 0;
 
         // fluid contribution to pressure acceleration of fluid
-        n_neighbors = find_neighbors(neighbors_idxs, fluid, fluid, idx_a, ctx_fluid);
+        n_neighbors = find_neighbors(j_neighbors, fluid, fluid, i, ctx_fluid);
 
         // compute parts of the momentum-conserving pressure from neighbors
         for(int k = 0; k < n_neighbors; k++){
-            int idx_b = neighbors_idxs[k];
-            struct particle b_j = particle_at(fluid, idx_b);
+            int j = j_neighbors[k];
+            struct particle fluid_j = particle_at(fluid, j);
 
-            float u_ab = a_i.u-b_j.u, v_ab = a_i.v-b_j.v;
-            float x_ab = a_i.x-b_j.x, y_ab = a_i.y-b_j.y;
-            float mean_rho = (a_i.rho+b_j.rho)/2;
+            float u_ij = fluid_i.u-fluid_j.u, v_ij = fluid_i.v-fluid_j.v;
+            float x_ij = fluid_i.x-fluid_j.x, y_ij = fluid_i.y-fluid_j.y;
+            float mean_rho = (fluid_i.rho+fluid_j.rho)/2;
 
-            float xy_dot_uv = x_ab*u_ab+y_ab*v_ab;
-            float xy_dot_xy = x_ab*x_ab+y_ab*y_ab;
-            float mu_ab = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
+            float xy_dot_uv = x_ij*u_ij+y_ij*v_ij;
+            float xy_dot_xy = x_ij*x_ij+y_ij*y_ij;
+            float mu_ij = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
 
-            viscosity_i[k] = 0.01*C*mu_ab/mean_rho;
+            viscosity_i[k] = 0.01*C*mu_ij/mean_rho;
         }
 
         // compute the acceleration due to pressure using the SPH gradient
-        viscosity_grad_i = sph_gradient(viscosity_i, fluid, fluid, idx_a, neighbors_idxs, n_neighbors, MASS);
+        viscosity_grad_i = sph_gradient(viscosity_i, fluid, fluid, i, j_neighbors, n_neighbors, MASS);
         du_dt_fluid_i += viscosity_grad_i.x;
         dv_dt_fluid_i += viscosity_grad_i.y;
 
         // boundary contribution to pressure acceleration of fluid
-        n_neighbors = find_neighbors(neighbors_idxs, fluid, boundary, idx_a, ctx_boundary);
+        n_neighbors = find_neighbors(j_neighbors, fluid, boundary, i, ctx_boundary);
 
         for(int k = 0; k < n_neighbors; k++){
-            int idx_b = neighbors_idxs[k];
-            struct particle b_j = particle_at(boundary, idx_b);
+            int j = j_neighbors[k];
+            struct particle boundary_j = particle_at(boundary, j);
 
-            float u_ab = a_i.u-b_j.u, v_ab = a_i.v-b_j.v;
-            float x_ab = a_i.x-b_j.x, y_ab = a_i.y-b_j.y;
-            // float mean_rho = (a_i.rho+b_j.rho)/2;
+            float u_ij = fluid_i.u-boundary_j.u, v_ij = fluid_i.v-boundary_j.v;
+            float x_ij = fluid_i.x-boundary_j.x, y_ij = fluid_i.y-boundary_j.y;
+            // float mean_rho = (fluid_i.rho+boundary_j.rho)/2;
 
-            float xy_dot_uv = x_ab*u_ab+y_ab*v_ab;
-            float xy_dot_xy = x_ab*x_ab+y_ab*y_ab;
-            float mu_ab = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
+            float xy_dot_uv = x_ij*u_ij+y_ij*v_ij;
+            float xy_dot_xy = x_ij*x_ij+y_ij*y_ij;
+            float mu_ij = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
 
-            viscosity_i[k] = 0.01*C*mu_ab/a_i.rho; // use fluid density only, not the mean density
+            viscosity_i[k] = 0.01*C*mu_ij/fluid_i.rho; // use fluid density only, not the mean density
         }
 
-        viscosity_grad_i = sph_gradient(viscosity_i, fluid, boundary, idx_a, neighbors_idxs, n_neighbors, MASS);
+        viscosity_grad_i = sph_gradient(viscosity_i, fluid, boundary, i, j_neighbors, n_neighbors, MASS);
         du_dt_fluid_i += viscosity_grad_i.x;
         dv_dt_fluid_i += viscosity_grad_i.y;
 
-        du_dt_fluid[idx_a] += du_dt_fluid_i;
-        dv_dt_fluid[idx_a] += dv_dt_fluid_i;
+        du_dt_fluid[i] += du_dt_fluid_i;
+        dv_dt_fluid[i] += dv_dt_fluid_i;
     }
 }
 
@@ -631,7 +633,7 @@ int main(){
                 fluid->y[particle_counter] = y_0;
                 fluid->u[particle_counter] = 0;
                 fluid->v[particle_counter] = 0;
-                fluid->m[particle_counter] = M;
+                fluid->m[particle_counter] = RHO_0*V;
                 fluid->rho[particle_counter] = RHO_0;
 
                 particle_counter++;
@@ -640,7 +642,7 @@ int main(){
     }
 
     // initialize mass of fluid_pred (will never change again)
-    for(int i = 0; i < n_fluid; i++) fluid_pred->m[i] = M;
+    for(int i = 0; i < n_fluid; i++) fluid_pred->m[i] = RHO_0*V;
 
     // count the number of boundary particles we need
     int n_boundary = 0;
