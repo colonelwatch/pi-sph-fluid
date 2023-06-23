@@ -6,8 +6,8 @@
 
 #include <ssd1306.h>
 
-#define DT 2.5e-4f         // s, time step (stability condition proportional to H/C?)
-#define H 0.1300f        // m, particle spacing
+#define DT 2.5e-4f       // s, time step (stability condition proportional to H/C?)
+#define H 0.1300f        // m, smoothing length
 #define R (H/1.3f)       // m, initial spacing
 #define WIDTH 4.0f       // m, width of domain
 #define HEIGHT 2.0f      // m, height of domain
@@ -15,7 +15,7 @@
 #define C 160.0f         // m/s, "numerical" speed of sound (10*max_speed for correct WCSPH)
 #define G 9.81f          // m/s^2, gravitational acceleration
 
-#define V (0.83*H*H) // m^3, volume of each fluidparticle
+#define V (0.83*H*H)     // m^3, volume of each fluid particle
 #define MAX_POSSIBLE_NEIGHBORS 48 // the sum of the first three hexagonal numbers is 22, so this should be enough
 
 
@@ -27,7 +27,7 @@ struct particles{
     float *x, *y, *u, *v; // intrinsic values
     float *m; // mass is RHO_0*V for fluid particles, but some calculated constant for boundary particles
     float *rho; // rho is derived using SPH
-    float *p; // pressure is derived from some incompressible-enforcing routine
+    float *p; // pressure is derived from some incompressible-enforcing routine (here being WCSPH)
 };
 
 struct particle{ // struct representing a single particle, which should serve as a function input or output
@@ -196,7 +196,7 @@ void update_neighbors_context(struct neighbors_context *ctx, struct particles *p
 int find_neighbors(int *j_neighbors, struct particles *particles_a, struct particles *particles_b, int i, 
     struct neighbors_context *ctx_b)
 {
-    // if a == b (equal ptrs), we need to reject the particle neighboring itself
+    // if particles_a == particles_b (equal ptrs), we need to reject the particle neighboring itself
     int ignore_self_interaction = (particles_a != particles_b);
 
     // Out of the neighboring cells AND the cell the particle falls in, find the real neighbors
@@ -436,10 +436,10 @@ void add_viscosity_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct p
          
         float du_dt_fluid_i = 0, dv_dt_fluid_i = 0;
 
-        // fluid contribution to pressure acceleration of fluid
+        // fluid contribution to viscosity acceleration of fluid
         n_neighbors = find_neighbors(j_neighbors, fluid, fluid, i, ctx_fluid);
 
-        // compute parts of the momentum-conserving pressure from neighbors
+        // compute parts of the viscosity from neighbors
         for(int k = 0; k < n_neighbors; k++){
             int j = j_neighbors[k];
             struct particle fluid_j = particle_at(fluid, j);
@@ -455,12 +455,12 @@ void add_viscosity_acceleration(float *du_dt_fluid, float *dv_dt_fluid, struct p
             viscosity_i[k] = 0.01*C*mu_ij/mean_rho;
         }
 
-        // compute the acceleration due to pressure using the SPH gradient
+        // compute the acceleration due to viscosity using the SPH gradient
         viscosity_grad_i = sph_gradient(viscosity_i, fluid, fluid, i, j_neighbors, n_neighbors, MASS);
         du_dt_fluid_i += viscosity_grad_i.x;
         dv_dt_fluid_i += viscosity_grad_i.y;
 
-        // boundary contribution to pressure acceleration of fluid
+        // boundary contribution to viscosity acceleration of fluid
         n_neighbors = find_neighbors(j_neighbors, fluid, boundary, i, ctx_boundary);
 
         for(int k = 0; k < n_neighbors; k++){
@@ -601,7 +601,7 @@ void* display_routine(void *arg){
 // MAIN
 
 int main(){
-    int particle_counter; // in case the number of particles is determined numerically, this is used to count them
+    int particle_counter; // when the number of particles is determined numerically, this is used to count them
 
 
     // initialize display
@@ -643,6 +643,7 @@ int main(){
 
     // initialize mass of fluid_pred (will never change again)
     for(int i = 0; i < n_fluid; i++) fluid_pred->m[i] = RHO_0*V;
+
 
     // count the number of boundary particles we need
     int n_boundary = 0;
@@ -697,10 +698,11 @@ int main(){
     clock_gettime(CLOCK_MONOTONIC, &now);
 
 
-    // set up before metaballs drawing and launch the display thread
+    // launch the display thread
     pthread_t display_thread;
     unsigned char *draw_buffer = (unsigned char*)calloc(1024, 1);
     pthread_create(&display_thread, NULL, display_routine, draw_buffer);
+
 
     // in leiu of defining a new function for finding the contributing particles to the metaballs condition, we'll just 
     //   reuse the neighbors search function (called with ctx_fluid as the argument)
@@ -713,6 +715,7 @@ int main(){
             pixel_pseudoparticles->y[i*128+j] = pixel_y;
         }
     }
+
 
     struct timespec last_drew = now; // initialize the last-drew time to now
 
