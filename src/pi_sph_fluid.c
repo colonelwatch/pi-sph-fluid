@@ -7,8 +7,8 @@
 #include <ssd1306.h>
 
 #define DT 2.5e-4f       // s, time step (stability condition proportional to H/C?)
-#define H 0.1300f        // m, smoothing length
-#define R (H/1.3f)       // m, initial spacing
+#define R 0.1000f        // m, initial spacing
+#define H (R*1.3f)       // m, smoothing length
 #define WIDTH 4.0f       // m, width of domain
 #define HEIGHT 2.0f      // m, height of domain
 #define RHO_0 1000.0f    // kg/m^3, reference density
