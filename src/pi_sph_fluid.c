@@ -305,19 +305,17 @@ void calculate_density(struct particle *fluid, struct particle *boundary, struct
 
     #pragma omp for
     for(int i = 0; i < ctx_fluid->n_particles; i++){
-        float rho_i = 1.293; // init with a small arbitrary val (chose air density) to avoid div-by-zero
-        
         // fluid contribution to density of fluid
         n_neighbors = find_neighbors(j_neighbors, fluid, fluid, i, ctx_fluid);
         read_neighbors(fluid, j_neighbors, n_neighbors, &neighbors);
-        rho_i += sph(ones, fluid[i], &neighbors, MASS);
+        float density_fluid_fluid = sph(ones, fluid[i], &neighbors, MASS);
 
         // boundary contribution to density of fluid
         n_neighbors = find_neighbors(j_neighbors, fluid, boundary, i, ctx_boundary);
         read_neighbors(boundary, j_neighbors, n_neighbors, &neighbors);
-        rho_i += sph(ones, fluid[i], &neighbors, MASS);
+        float density_fluid_boundary = sph(ones, fluid[i], &neighbors, MASS);
 
-        fluid[i].rho = rho_i;
+        fluid[i].rho = density_fluid_fluid+density_fluid_boundary;
     }
 }
 
@@ -345,77 +343,61 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
     
     #pragma omp for
     for(int i = 0; i < ctx_fluid->n_particles; i++){
-        float du_dt_fluid_i = gravity_x, dv_dt_fluid_i = gravity_y;
-
-        // fluid contribution to pressure and viscosity acceleration of fluid
+        // get the fluid neighbors of fluid[i]
         n_neighbors = find_neighbors(j_neighbors, fluid, fluid, i, ctx_fluid);
         read_neighbors(fluid, j_neighbors, n_neighbors, &neighbors);
-
-        // compute parts of the momentum-conserving pressure from neighbors
+        
         for(int k = 0; k < n_neighbors; k++){
             struct particle fluid_j = particle_at(&neighbors, k);
+
+            // compute parts of the momentum-conserving pressure from fluid neighbors
+            float pressure_ij = -(fluid[i].p/(fluid[i].rho*fluid[i].rho) + fluid_j.p/(fluid_j.rho*fluid_j.rho));
             
-            float q = euclid_dist(fluid[i].x, fluid[i].y, fluid_j.x, fluid_j.y)/H;
-            float artifical_pressure = 0.1*powf(W(q)/W(0.2*H), 4); // mentioned by Macklin 2013 "Position Based Fluids"
-
-            temp_i[k] = -( fluid[i].p/(fluid[i].rho*fluid[i].rho) + fluid_j.p/(fluid_j.rho*fluid_j.rho) + artifical_pressure);
-        }
-
-        // compute the acceleration due to pressure using the SPH gradient
-        float2 pressure_fluid_fluid_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
-        du_dt_fluid_i += pressure_fluid_fluid_i.x;
-        dv_dt_fluid_i += pressure_fluid_fluid_i.y;
-
-        // compute parts of the viscosity from neighbors
-        for(int k = 0; k < n_neighbors; k++){
-            struct particle fluid_j = particle_at(&neighbors, k);
+            // compute parts of the artificial pressure mentioned by Macklin 2013 (PBF) from fluid neighbors
+            float W_ij = W(euclid_dist(fluid[i].x, fluid[i].y, fluid_j.x, fluid_j.y) / H);
+            float artifical_pressure_ij = -0.1*powf(W_ij/W(0.2*H), 4);
             
+            // compute parts of the viscosity from fluid neighbors
             float u_ij = fluid[i].u-fluid_j.u, v_ij = fluid[i].v-fluid_j.v;
             float x_ij = fluid[i].x-fluid_j.x, y_ij = fluid[i].y-fluid_j.y;
-            float mean_rho = (fluid[i].rho+fluid_j.rho)/2;
-
             float xy_dot_uv = x_ij*u_ij+y_ij*v_ij;
             float xy_dot_xy = x_ij*x_ij+y_ij*y_ij;
             float mu_ij = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
+            float mean_rho = (fluid[i].rho+fluid_j.rho)/2;
+            float viscosity_ij = 0.01*C*mu_ij/mean_rho;
 
-            temp_i[k] = 0.01*C*mu_ij/mean_rho;
+            temp_i[k] = pressure_ij+artifical_pressure_ij+viscosity_ij;
         }
 
-        // compute the acceleration due to viscosity using the SPH gradient
-        float2 viscosity_fluid_fluid_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
-        du_dt_fluid_i += viscosity_fluid_fluid_i.x;
-        dv_dt_fluid_i += viscosity_fluid_fluid_i.y;
+        // compute the acceleration due to fluid neighbors
+        float2 acc_fluid_fluid_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
 
-        // boundary contribution to pressure and viscosity acceleration of fluid
+        // get the boundary neighbors of fluid[i]
         n_neighbors = find_neighbors(j_neighbors, fluid, boundary, i, ctx_boundary);
         read_neighbors(boundary, j_neighbors, n_neighbors, &neighbors);
-
-        for(int k = 0; k < n_neighbors; k++) temp_i[k] = -fluid[i].p/(fluid[i].rho*fluid[i].rho);
-
-        float2 pressure_fluid_boundary_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
-        du_dt_fluid_i += pressure_fluid_boundary_i.x;
-        dv_dt_fluid_i += pressure_fluid_boundary_i.y;
-
+        
         for(int k = 0; k < n_neighbors; k++){
-            struct particle fluid_j = particle_at(&neighbors, k);
-            
-            float u_ij = fluid[i].u-fluid_j.u, v_ij = fluid[i].v-fluid_j.v;
-            float x_ij = fluid[i].x-fluid_j.x, y_ij = fluid[i].y-fluid_j.y;
-            // float mean_rho = (fluid_i.rho+neighbors.rho[k])/2;
+            struct particle boundary_j = particle_at(&neighbors, k);
 
+            // compute parts of the momentum-conserving pressure from boundary neighbors
+            float pressure_ij = -fluid[i].p/(fluid[i].rho*fluid[i].rho);
+            
+            // compute parts of the viscosity from boundary neighbors
+            float u_ij = fluid[i].u-boundary_j.u, v_ij = fluid[i].v-boundary_j.v;
+            float x_ij = fluid[i].x-boundary_j.x, y_ij = fluid[i].y-boundary_j.y;
             float xy_dot_uv = x_ij*u_ij+y_ij*v_ij;
             float xy_dot_xy = x_ij*x_ij+y_ij*y_ij;
             float mu_ij = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
+            float viscosity_ij = 0.01*C*mu_ij/fluid[i].rho; // use fluid density only, not the mean density
 
-            temp_i[k] = 0.01*C*mu_ij/fluid[i].rho; // use fluid density only, not the mean density
+            temp_i[k] = pressure_ij+viscosity_ij;
         }
 
-        float2 viscosity_fluid_boundary_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
-        du_dt_fluid_i += viscosity_fluid_boundary_i.x;
-        dv_dt_fluid_i += viscosity_fluid_boundary_i.y;
+        // compute the acceleration due to boundary neighbors
+        float2 acc_fluid_boundary_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
 
-        du_dt_fluid[i] = du_dt_fluid_i;
-        dv_dt_fluid[i] = dv_dt_fluid_i;
+        du_dt_fluid[i] = gravity_x+acc_fluid_fluid_i.x+acc_fluid_boundary_i.x;
+        dv_dt_fluid[i] = gravity_y+acc_fluid_fluid_i.y+acc_fluid_boundary_i.y;
     }
 }
 
