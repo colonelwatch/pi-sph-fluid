@@ -515,11 +515,6 @@ int main(){
     int particle_counter; // when the number of particles is determined numerically, this is used to count them
 
 
-    // initialize display
-    ssd1306_128x64_i2c_init();
-    ssd1306_clearScreen();
-    
-    
     int n_fluid;
     struct particle *fluid;
     float *du_dt, *dv_dt;
@@ -613,6 +608,8 @@ int main(){
             pixel_pseudoparticles[i*128+j].y = pixel_y;
         }
     }
+
+    ssd1306_128x64_i2c_init(); // initialize display
 
     pthread_create(&display_thread, NULL, display_routine, draw_buffer); // launch the display thread
 
