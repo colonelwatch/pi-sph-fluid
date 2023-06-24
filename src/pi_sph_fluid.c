@@ -154,23 +154,20 @@ int find_neighbors(int *j_neighbors, struct particle *particles_a, struct partic
 
     // Out of the neighboring cells AND the cell the particle falls in, find the real neighbors
     int neighbors_counter = 0;
-    float x_i = particles_a[i].x, y_i = particles_a[i].y;
-    
-    int i_cell_center = (int)((y_i - ctx_b->y_min) / ctx_b->cell_length),
-        j_cell_center = (int)((x_i - ctx_b->x_min) / ctx_b->cell_length);
+    int i_cell_center = (int)((particles_a[i].y - ctx_b->y_min) / ctx_b->cell_length),
+        j_cell_center = (int)((particles_a[i].x - ctx_b->x_min) / ctx_b->cell_length);
     for(int i_cell = i_cell_center-1; i_cell <= i_cell_center+1; i_cell++){
         for(int j_cell = j_cell_center-1; j_cell <= j_cell_center+1; j_cell++){
             if(i_cell < 0 || i_cell >= ctx_b->n_cells || j_cell < 0 || j_cell >= ctx_b->m_cells)
                 continue;
-            
             int ij_cell = i_cell * ctx_b->m_cells + j_cell;
 
             struct linked_list_element *current_element = ctx_b->cells[ij_cell].head;
             while(current_element != NULL){
                 int j = current_element->idx;
-                float x_j = particles_b[j].x, y_j = particles_b[j].y;
+                float distance = euclid_dist(particles_a[i].x, particles_a[i].y, particles_b[j].x, particles_b[j].y);
 
-                if(euclid_dist(x_i, y_i, x_j, y_j) < 2*H && (ignore_self_interaction || i != j)){
+                if(distance < 2*H && (ignore_self_interaction || i != j)){
                     j_neighbors[neighbors_counter] = j;
                     neighbors_counter++;
                 }
