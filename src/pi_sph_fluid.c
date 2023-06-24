@@ -547,13 +547,9 @@ int main(){
             if(in_initial_shape(x_0, y_0)) n_fluid++;
     
     // alloc fluid and derivatives
-    struct particle *fluid, *fluid_pred;
-    fluid = (struct particle*)malloc(n_fluid*sizeof(struct particle));
-    fluid_pred = (struct particle*)malloc(n_fluid*sizeof(struct particle));
-    float *du_dt_pred = (float*)malloc(n_fluid*sizeof(float)), // momentum and continuity results for predictor step
-          *dv_dt_pred = (float*)malloc(n_fluid*sizeof(float));
-    float *du_dt_corr = (float*)malloc(n_fluid*sizeof(float)), // momentum and continuity results for corrector step
-          *dv_dt_corr = (float*)malloc(n_fluid*sizeof(float));
+    struct particle *fluid = (struct particle*)malloc(n_fluid*sizeof(struct particle));
+    float *du_dt = (float*)malloc(n_fluid*sizeof(float)), // momentum and continuity results for predictor step
+          *dv_dt = (float*)malloc(n_fluid*sizeof(float));
     
     // initialize fluid particles
     particle_counter = 0;
@@ -571,9 +567,6 @@ int main(){
             }
         }
     }
-
-    // initialize mass of fluid_pred (will never change again)
-    for(int i = 0; i < n_fluid; i++) fluid_pred[i].m = RHO_0*V;
 
 
     // count the number of boundary particles we need
@@ -665,47 +658,40 @@ int main(){
     clock_gettime(CLOCK_MONOTONIC, &last_reported);
 
 
+    update_neighbors_context(ctx_fluid, fluid);
+
+    calculate_density(fluid, boundary, ctx_fluid, ctx_boundary);
+    calculate_particle_pressure(fluid, n_fluid);
+    calculate_accelerations(du_dt, dv_dt, fluid, boundary, ctx_fluid, ctx_boundary, g[0], g[1]);
+
     // main loop
     #pragma omp parallel num_threads(4)
     while(1){
-        // predictor step: update the neighbors search context
-        #pragma omp single
-        update_neighbors_context(ctx_fluid, fluid);
-
-        // predictor step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
-        calculate_density(fluid, boundary, ctx_fluid, ctx_boundary);
-        calculate_particle_pressure(fluid, n_fluid);
-        calculate_accelerations(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_fluid, ctx_boundary, g[0], g[1]);
-
         #pragma omp single
         {
-            // predictor step: get what the particles would be like if we used forward Euler
             for(int i = 0; i < n_fluid; i++){
-                fluid_pred[i].x = fluid[i].x + fluid[i].u*DT;
-                fluid_pred[i].y = fluid[i].y + fluid[i].v*DT;
-                fluid_pred[i].u = fluid[i].u + du_dt_pred[i]*DT;
-                fluid_pred[i].v = fluid[i].v + dv_dt_pred[i]*DT;
+                fluid[i].u += 0.5*DT*du_dt[i];
+                fluid[i].v += 0.5*DT*dv_dt[i];
             }
 
-            // corrector step: update the neighbors context using the predictor positions
-            update_neighbors_context(ctx_fluid, fluid_pred);
+            for(int i = 0; i < n_fluid; i++){
+                fluid[i].x += DT*fluid[i].u;
+                fluid[i].y += DT*fluid[i].v;
+            }
+
+            update_neighbors_context(ctx_fluid, fluid);
         }
 
-        // corrector step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
-        calculate_density(fluid_pred, boundary, ctx_fluid, ctx_boundary);
-        calculate_particle_pressure(fluid_pred, n_fluid);
-        calculate_accelerations(du_dt_corr, dv_dt_corr, fluid_pred, boundary, ctx_fluid, ctx_boundary, g[0], g[1]);
+        calculate_density(fluid, boundary, ctx_fluid, ctx_boundary);
+        calculate_particle_pressure(fluid, n_fluid);
+        calculate_accelerations(du_dt, dv_dt, fluid, boundary, ctx_fluid, ctx_boundary, g[0], g[1]);
 
         #pragma omp single
         {
-            // corrector step: step forward using the midpoint between the predictor and corrector derivatives
             for(int i = 0; i < n_fluid; i++){
-                fluid[i].x += 0.5f*(fluid_pred[i].u + fluid[i].u)*DT;
-                fluid[i].y += 0.5f*(fluid_pred[i].v + fluid[i].v)*DT;
-                fluid[i].u += 0.5f*(du_dt_pred[i] + du_dt_corr[i])*DT;
-                fluid[i].v += 0.5f*(dv_dt_pred[i] + dv_dt_corr[i])*DT;
+                fluid[i].u += 0.5*DT*du_dt[i];
+                fluid[i].v += 0.5*DT*dv_dt[i];
             }
-
 
             clock_gettime(CLOCK_MONOTONIC, &now); // take a single timestamp for the below real-time operations
         }
