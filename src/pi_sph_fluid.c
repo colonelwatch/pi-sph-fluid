@@ -405,36 +405,33 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
 
 // METABALLS
 // See Wikipedia article and original Blinn 1982 paper on metaballs. This function follows from the original derivation 
-//  of a surface from points, but it's currently not properly parameterized or optimized. On the other hand, it manages 
-//  to hook off of the existing neighbor-finding code and kernel function.
+//  of a surface from points. Here I chose to hook off of the existing neighbor-finding code and kernel function.
 
 void draw_metaballs(unsigned char *draw_buffer, struct particle *pixel_pseudoparticles, struct particle *fluid, 
     struct neighbors_context *ctx_fluid)
 {
-    int contributing_particles[MAX_POSSIBLE_NEIGHBORS], n_contributing_particles;
-    struct particle_neighbors neighbors;
+    int j_contributors[MAX_POSSIBLE_NEIGHBORS], n_contributors;
+    struct particle_neighbors contributors;
     
     #pragma omp for collapse(2)
     for(int i = 0; i < 64; i++){
         for(int j = 0; j < 128; j++){
             int ij = i*128+j;
 
-            n_contributing_particles = find_neighbors(contributing_particles, 
-                pixel_pseudoparticles, fluid, ij, ctx_fluid);
-            read_neighbors(fluid, contributing_particles, n_contributing_particles, &neighbors);
+            n_contributors = find_neighbors(j_contributors, pixel_pseudoparticles, fluid, ij, ctx_fluid);
+            read_neighbors(fluid, j_contributors, n_contributors, &contributors);
 
             float metaball_condition = 0;
-            for(int k = 0; k < n_contributing_particles; k++){
-                struct particle fluid_j = particle_at(&neighbors, k);
+            for(int k = 0; k < n_contributors; k++){
+                struct particle fluid_j = particle_at(&contributors, k);
 
-                float distance = euclid_dist(pixel_pseudoparticles[ij].x, 
-                    pixel_pseudoparticles[ij].y, fluid_j.x, fluid_j.y);
+                float d = euclid_dist(pixel_pseudoparticles[ij].x, pixel_pseudoparticles[ij].y, fluid_j.x, fluid_j.y);
 
+                // for now, using the SPH kernel (not normalized) as the Gaussian-like function suggested by Blinn
                 float unnormalizing_factor = (4*M_PI*H*H)/7;
-                float new_normalizing_factor = 1.0;
-                metaball_condition += new_normalizing_factor*unnormalizing_factor*W(distance/H);
+                metaball_condition += unnormalizing_factor*W(d/H);
 
-                if(metaball_condition >= 1) break;
+                if(metaball_condition >= 1) break; // no need to keep adding contributions
             }
 
             #pragma omp critical
