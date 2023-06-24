@@ -20,48 +20,13 @@
 
 
 // PARTICLES
-// SPH particles are implemented as a struct of arrays to suit automatic vectorization
 
-struct particles{
-    int count;
-    float *x, *y, *u, *v; // intrinsic values
-    float *m; // mass is RHO_0*V for fluid particles, but some calculated constant for boundary particles
-    float *rho; // rho is derived using SPH
-    float *p; // pressure is derived from some incompressible-enforcing routine (here being WCSPH)
+struct particle{ // struct representing a single particle
+    float x, y, u, v; // intrinsic values
+    float m; // mass is RHO_0*V for fluid particles, but some calculated constant for boundary particles
+    float rho; // rho is derived using SPH
+    float p; // pressure is derived from some incompressible-enforcing routine (here being WCSPH)
 };
-
-struct particle{ // struct representing a single particle, which should serve as a function input or output
-    float x, y, u, v;
-    float m;
-    float rho;
-    float p;
-};
-
-// Helper function for allocating all the arrays of the particles struct using a malloc-like syntax
-struct particles* alloc_particles(int n_particles){
-    struct particles *particles = (struct particles*)malloc(sizeof(struct particles));
-    
-    particles->count = n_particles;
-    particles->x = (float*)malloc(n_particles*sizeof(float));
-    particles->y = (float*)malloc(n_particles*sizeof(float));
-    particles->u = (float*)malloc(n_particles*sizeof(float));
-    particles->v = (float*)malloc(n_particles*sizeof(float));
-    particles->m = (float*)malloc(n_particles*sizeof(float));
-    particles->rho = (float*)malloc(n_particles*sizeof(float));
-    particles->p = (float*)malloc(n_particles*sizeof(float));
-
-    return particles;
-}
-
-// Helper function for pulling an individual particle out of the struct of arrays
-struct particle particle_at(struct particles *particles, int i){
-    return (struct particle){
-        .x = particles->x[i], .y = particles->y[i], .u = particles->u[i], .v = particles->v[i],
-        .m = particles->m[i],
-        .rho = particles->rho[i],
-        .p = particles->p[i]
-    };
-}
 
 
 // VECTOR RETURN-ELEMENT
@@ -166,22 +131,22 @@ struct neighbors_context *initialize_neighbors_context(int n_particles, float x_
     return ctx;
 }
 
-void update_neighbors_context(struct neighbors_context *ctx, struct particles *particles){
+void update_neighbors_context(struct neighbors_context *ctx, struct particle *particles){
     // reset the linked lists (note that this doesn't orphan the elements)
     for(int ij_cell = 0; ij_cell < ctx->n_cells * ctx->m_cells; ij_cell++)
         ctx->cells[ij_cell] = (struct linked_list){ .head = NULL, .tail = NULL };
 
     // for each particle, infer the cell it falls in
-    for(int i = 0; i < particles->count; i++){
-        int i_cell = (int)((particles->y[i] - ctx->y_min) / ctx->cell_length);
-        int j_cell = (int)((particles->x[i] - ctx->x_min) / ctx->cell_length);
+    for(int i = 0; i < ctx->n_particles; i++){
+        int i_cell = (int)((particles[i].y - ctx->y_min) / ctx->cell_length);
+        int j_cell = (int)((particles[i].x - ctx->x_min) / ctx->cell_length);
         int ij_cell = i_cell * ctx->m_cells + j_cell;
 
         append_element(&ctx->cells[ij_cell], &ctx->cells_elements[i]);
     }
 }
 
-int find_neighbors(int *j_neighbors, struct particles *particles_a, struct particles *particles_b, int i, 
+int find_neighbors(int *j_neighbors, struct particle *particles_a, struct particle *particles_b, int i, 
     struct neighbors_context *ctx_b)
 {
     // if particles_a == particles_b (equal ptrs), we need to reject the particle neighboring itself
@@ -189,7 +154,7 @@ int find_neighbors(int *j_neighbors, struct particles *particles_a, struct parti
 
     // Out of the neighboring cells AND the cell the particle falls in, find the real neighbors
     int neighbors_counter = 0;
-    float x_i = particles_a->x[i], y_i = particles_a->y[i];
+    float x_i = particles_a[i].x, y_i = particles_a[i].y;
     
     int i_cell_center = (int)((y_i - ctx_b->y_min) / ctx_b->cell_length),
         j_cell_center = (int)((x_i - ctx_b->x_min) / ctx_b->cell_length);
@@ -203,7 +168,7 @@ int find_neighbors(int *j_neighbors, struct particles *particles_a, struct parti
             struct linked_list_element *current_element = ctx_b->cells[ij_cell].head;
             while(current_element != NULL){
                 int j = current_element->idx;
-                float x_j = particles_b->x[j], y_j = particles_b->y[j];
+                float x_j = particles_b[j].x, y_j = particles_b[j].y;
 
                 if(euclid_dist(x_i, y_i, x_j, y_j) < 2*H && (ignore_self_interaction || i != j)){
                     j_neighbors[neighbors_counter] = j;
@@ -218,27 +183,60 @@ int find_neighbors(int *j_neighbors, struct particles *particles_a, struct parti
     return neighbors_counter;
 }
 
+// neighbors should be organized as a struct of arrays to suit automatic vectorization, but this can otherwise be 
+//  thought of as an abstract object containing a copy of the particle data from each neighbor
+struct particle_neighbors{
+    int count;
+    float x[MAX_POSSIBLE_NEIGHBORS], y[MAX_POSSIBLE_NEIGHBORS], u[MAX_POSSIBLE_NEIGHBORS], v[MAX_POSSIBLE_NEIGHBORS];
+    float m[MAX_POSSIBLE_NEIGHBORS];
+    float rho[MAX_POSSIBLE_NEIGHBORS];
+    float p[MAX_POSSIBLE_NEIGHBORS];
+};
+
+// to do so, we'll combine the fetch step with a transpose from AoS to SoA
+void read_neighbors(struct particle *particles, int *j_neighbors, int n_neighbors, 
+    struct particle_neighbors *neighbors)
+{
+    neighbors->count = n_neighbors;
+
+    for(int k = 0; k < n_neighbors; k++){
+        int j = j_neighbors[k];
+
+        neighbors->x[k] = particles[j].x;
+        neighbors->y[k] = particles[j].y;
+        neighbors->u[k] = particles[j].u;
+        neighbors->v[k] = particles[j].v;
+        neighbors->m[k] = particles[j].m;
+        neighbors->rho[k] = particles[j].rho;
+        neighbors->p[k] = particles[j].p;
+    }
+}
+
+// Helper function for pulling an individual particle out of the struct of arrays
+struct particle particle_at(struct particle_neighbors *particles, int i){
+    return (struct particle){
+        .x = particles->x[i], .y = particles->y[i], .u = particles->u[i], .v = particles->v[i],
+        .m = particles->m[i],
+        .rho = particles->rho[i],
+        .p = particles->p[i]
+    };
+}
+
 
 // SPH APPROXIMATIONS
 // Contained implementations of the SPH approximation, integrating all of the above
 
 enum leading_factor { MASS, VOLUME }; // fundamental SPH approx uses volume, but most derived invocations use mass
 
-float sph(float *quantity, struct particles *particles_a, struct particles *particles_b, int i, int *j_neighbors, 
-    int n_neighbors, enum leading_factor leading_factor)
+float sph(float *quantity, struct particle particle_i, struct particle_neighbors *particle_i_neighbors, 
+    enum leading_factor leading_factor)
 {
-    float x_i = particles_a->x[i], y_i = particles_a->y[i];
-
     float sph_quantity = 0;
-    for(int k = 0; k < n_neighbors; k++){
-        int j = j_neighbors[k]; // j is traditionally the index of the neighbor particle
+    for(int k = 0; k < particle_i_neighbors->count; k++){
+        struct particle neighbor_j = particle_at(particle_i_neighbors, k);
 
-        float x_j = particles_b->x[j], y_j = particles_b->y[j];
-        float m_j = particles_b->m[j];
-        float rho_j = particles_b->rho[j];
-
-        float W_ij = W(euclid_dist(x_i, y_i, x_j, y_j) / H);
-        float leading_factor_j = (leading_factor == MASS)? m_j : m_j/rho_j;
+        float W_ij = W(euclid_dist(particle_i.x, particle_i.y, neighbor_j.x, neighbor_j.y) / H);
+        float leading_factor_j = (leading_factor == MASS)? neighbor_j.m : neighbor_j.m/neighbor_j.rho;
 
         sph_quantity += leading_factor_j * quantity[k] * W_ij;
     }
@@ -246,21 +244,15 @@ float sph(float *quantity, struct particles *particles_a, struct particles *part
     return sph_quantity;
 }
 
-float2 sph_gradient(float *quantity, struct particles *particles_a, struct particles *particles_b, int i, 
-    int *j_neighbors, int n_neighbors, enum leading_factor leading_factor)
+float2 sph_gradient(float *quantity, struct particle particle_i, struct particle_neighbors *particle_i_neighbors, 
+    enum leading_factor leading_factor)
 {
-    float x_i = particles_a->x[i], y_i = particles_a->y[i];
-    
     float2 grad_quantity = (float2){ .x = 0, .y = 0 };
-    for(int k = 0; k < n_neighbors; k++){
-        int j = j_neighbors[k];
+    for(int k = 0; k < particle_i_neighbors->count; k++){
+        struct particle neighbor_j = particle_at(particle_i_neighbors, k);
 
-        float x_j = particles_b->x[j], y_j = particles_b->y[j];
-        float m_j = particles_b->m[j];
-        float rho_j = particles_b->rho[j];
-
-        float2 grad_i_W_ij = grad_a_W_ab(x_i, y_i, x_j, y_j);
-        float leading_factor_j = (leading_factor == MASS)? m_j : m_j/rho_j;
+        float2 grad_i_W_ij = grad_a_W_ab(particle_i.x, particle_i.y, neighbor_j.x, neighbor_j.y);
+        float leading_factor_j = (leading_factor == MASS)? neighbor_j.m : neighbor_j.m/neighbor_j.rho;
 
         grad_quantity.x += leading_factor_j*quantity[k]*grad_i_W_ij.x;
         grad_quantity.y += leading_factor_j*quantity[k]*grad_i_W_ij.y;
@@ -279,52 +271,53 @@ int in_initial_shape(float x, float y){
     return euclid_dist(x, y, WIDTH/2, HEIGHT/2) < 0.70;
 }
 
-void calculate_boundary_pseudomass(struct particles *boundary, struct neighbors_context *ctx_boundary){
+void calculate_boundary_pseudomass(struct particle *boundary, struct neighbors_context *ctx_boundary){
     int j_neighbors[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+    struct particle_neighbors neighbors;
 
     #pragma omp for
-    for(int i = 0; i < boundary->count; i++){
-        float x_i = boundary->x[i], y_i = boundary->y[i];
-        
+    for(int i = 0; i < ctx_boundary->n_particles; i++){
         n_neighbors = find_neighbors(j_neighbors, boundary, boundary, i, ctx_boundary);
+        read_neighbors(boundary, j_neighbors, n_neighbors, &neighbors);
 
         // the reciprocal volume calculation doesn't exactly fit typical SPH, so we'll implement it manually
         float recip_volume = 0;
         for(int k = 0; k < n_neighbors; k++){
-            int j = j_neighbors[k];
-
-            float x_j = boundary->x[j], y_j = boundary->y[j];
-
-            recip_volume += W(euclid_dist(x_i, y_i, x_j, y_j) / H);
+            struct particle boundary_j = particle_at(&neighbors, k);
+            
+            recip_volume += W(euclid_dist(boundary[i].x, boundary[i].y, boundary_j.x, boundary_j.y) / H);
         }
 
-        float m_i = boundary->rho[i] / recip_volume;
+        float m_i = boundary[i].rho / recip_volume;
 
-        boundary->m[i] = m_i;
+        boundary[i].m = m_i;
     }
 }
 
-void calculate_density(struct particles *fluid, struct particles *boundary, struct neighbors_context *ctx_fluid, 
+void calculate_density(struct particle *fluid, struct particle *boundary, struct neighbors_context *ctx_fluid, 
     struct neighbors_context *ctx_boundary)
 {
     static float ones[MAX_POSSIBLE_NEIGHBORS] = {1, 1, 1, 1, 1, 1, 1, 1, 
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     int j_neighbors[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
+    struct particle_neighbors neighbors;
 
     #pragma omp for
-    for(int i = 0; i < fluid->count; i++){
+    for(int i = 0; i < ctx_fluid->n_particles; i++){
         float rho_i = 1.293; // init with a small arbitrary val (chose air density) to avoid div-by-zero
         
         // fluid contribution to density of fluid
         n_neighbors = find_neighbors(j_neighbors, fluid, fluid, i, ctx_fluid);
-        rho_i += sph(ones, fluid, fluid, i, j_neighbors, n_neighbors, MASS);
+        read_neighbors(fluid, j_neighbors, n_neighbors, &neighbors);
+        rho_i += sph(ones, fluid[i], &neighbors, MASS);
 
         // boundary contribution to density of fluid
         n_neighbors = find_neighbors(j_neighbors, fluid, boundary, i, ctx_boundary);
-        rho_i += sph(ones, fluid, boundary, i, j_neighbors, n_neighbors, MASS);
+        read_neighbors(boundary, j_neighbors, n_neighbors, &neighbors);
+        rho_i += sph(ones, fluid[i], &neighbors, MASS);
 
-        fluid->rho[i] = rho_i;
+        fluid[i].rho = rho_i;
     }
 }
 
@@ -332,56 +325,54 @@ void calculate_density(struct particles *fluid, struct particles *boundary, stru
 //  not an implicit one needing an iterative solver. Sometimes doesn't use the true speed of sound in a fluid, and
 //  rather uses some number high enough that the density doesn't vary by too many percents. That's also how I did it
 //  here because I saw that using the true speed caused instability. See Monaghan 1994 or Monaghan 2005.
-void calculate_particle_pressure(struct particles *particles){
+void calculate_particle_pressure(struct particle *particles, int n_particles){
     #pragma omp for
-    for(int i = 0; i < particles->count; i++){
+    for(int i = 0; i < n_particles; i++){
         const float B = C*C*RHO_0/7;
-        float rho_ratio = particles->rho[i]/RHO_0;
+        float rho_ratio = particles[i].rho/RHO_0;
         float pressure_i = B*(pow(rho_ratio, 7)-1);
-        particles->p[i] = (pressure_i > 0)? pressure_i : 0;
+        particles[i].p = (pressure_i > 0)? pressure_i : 0;
     }
 }
 
-void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct particles *fluid, 
-    struct particles *boundary, struct neighbors_context *ctx_fluid, struct neighbors_context *ctx_boundary, 
+void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct particle *fluid, 
+    struct particle *boundary, struct neighbors_context *ctx_fluid, struct neighbors_context *ctx_boundary, 
     float gravity_x, float gravity_y)
 {
     int j_neighbors[MAX_POSSIBLE_NEIGHBORS], n_neighbors;
     float temp_i[MAX_POSSIBLE_NEIGHBORS]; // holds a scalar quantity per neighbor to take the gradient of
+    struct particle_neighbors neighbors;
     
     #pragma omp for
-    for(int i = 0; i < fluid->count; i++){
-        struct particle fluid_i = particle_at(fluid, i);
-         
+    for(int i = 0; i < ctx_fluid->n_particles; i++){
         float du_dt_fluid_i = gravity_x, dv_dt_fluid_i = gravity_y;
 
         // fluid contribution to pressure and viscosity acceleration of fluid
         n_neighbors = find_neighbors(j_neighbors, fluid, fluid, i, ctx_fluid);
+        read_neighbors(fluid, j_neighbors, n_neighbors, &neighbors);
 
         // compute parts of the momentum-conserving pressure from neighbors
         for(int k = 0; k < n_neighbors; k++){
-            int j = j_neighbors[k];
-            struct particle fluid_j = particle_at(fluid, j);
-
-            float q = euclid_dist(fluid_i.x, fluid_i.y, fluid_j.x, fluid_j.y)/H;
+            struct particle fluid_j = particle_at(&neighbors, k);
+            
+            float q = euclid_dist(fluid[i].x, fluid[i].y, fluid_j.x, fluid_j.y)/H;
             float artifical_pressure = 0.1*powf(W(q)/W(0.2*H), 4); // mentioned by Macklin 2013 "Position Based Fluids"
 
-            temp_i[k] = -( fluid_i.p/(fluid_i.rho*fluid_i.rho) + fluid_j.p/(fluid_j.rho*fluid_j.rho) + artifical_pressure);
+            temp_i[k] = -( fluid[i].p/(fluid[i].rho*fluid[i].rho) + fluid_j.p/(fluid_j.rho*fluid_j.rho) + artifical_pressure);
         }
 
         // compute the acceleration due to pressure using the SPH gradient
-        float2 pressure_fluid_fluid_i = sph_gradient(temp_i, fluid, fluid, i, j_neighbors, n_neighbors, MASS);
+        float2 pressure_fluid_fluid_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
         du_dt_fluid_i += pressure_fluid_fluid_i.x;
         dv_dt_fluid_i += pressure_fluid_fluid_i.y;
 
         // compute parts of the viscosity from neighbors
         for(int k = 0; k < n_neighbors; k++){
-            int j = j_neighbors[k];
-            struct particle fluid_j = particle_at(fluid, j);
-
-            float u_ij = fluid_i.u-fluid_j.u, v_ij = fluid_i.v-fluid_j.v;
-            float x_ij = fluid_i.x-fluid_j.x, y_ij = fluid_i.y-fluid_j.y;
-            float mean_rho = (fluid_i.rho+fluid_j.rho)/2;
+            struct particle fluid_j = particle_at(&neighbors, k);
+            
+            float u_ij = fluid[i].u-fluid_j.u, v_ij = fluid[i].v-fluid_j.v;
+            float x_ij = fluid[i].x-fluid_j.x, y_ij = fluid[i].y-fluid_j.y;
+            float mean_rho = (fluid[i].rho+fluid_j.rho)/2;
 
             float xy_dot_uv = x_ij*u_ij+y_ij*v_ij;
             float xy_dot_xy = x_ij*x_ij+y_ij*y_ij;
@@ -391,35 +382,35 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
         }
 
         // compute the acceleration due to viscosity using the SPH gradient
-        float2 viscosity_fluid_fluid_i = sph_gradient(temp_i, fluid, fluid, i, j_neighbors, n_neighbors, MASS);
+        float2 viscosity_fluid_fluid_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
         du_dt_fluid_i += viscosity_fluid_fluid_i.x;
         dv_dt_fluid_i += viscosity_fluid_fluid_i.y;
 
         // boundary contribution to pressure and viscosity acceleration of fluid
         n_neighbors = find_neighbors(j_neighbors, fluid, boundary, i, ctx_boundary);
+        read_neighbors(boundary, j_neighbors, n_neighbors, &neighbors);
 
-        for(int k = 0; k < n_neighbors; k++) temp_i[k] = -fluid_i.p/(fluid_i.rho*fluid_i.rho);
+        for(int k = 0; k < n_neighbors; k++) temp_i[k] = -fluid[i].p/(fluid[i].rho*fluid[i].rho);
 
-        float2 pressure_fluid_boundary_i = sph_gradient(temp_i, fluid, boundary, i, j_neighbors, n_neighbors, MASS);
+        float2 pressure_fluid_boundary_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
         du_dt_fluid_i += pressure_fluid_boundary_i.x;
         dv_dt_fluid_i += pressure_fluid_boundary_i.y;
 
         for(int k = 0; k < n_neighbors; k++){
-            int j = j_neighbors[k];
-            struct particle boundary_j = particle_at(boundary, j);
-
-            float u_ij = fluid_i.u-boundary_j.u, v_ij = fluid_i.v-boundary_j.v;
-            float x_ij = fluid_i.x-boundary_j.x, y_ij = fluid_i.y-boundary_j.y;
-            // float mean_rho = (fluid_i.rho+boundary_j.rho)/2;
+            struct particle fluid_j = particle_at(&neighbors, k);
+            
+            float u_ij = fluid[i].u-fluid_j.u, v_ij = fluid[i].v-fluid_j.v;
+            float x_ij = fluid[i].x-fluid_j.x, y_ij = fluid[i].y-fluid_j.y;
+            // float mean_rho = (fluid_i.rho+neighbors.rho[k])/2;
 
             float xy_dot_uv = x_ij*u_ij+y_ij*v_ij;
             float xy_dot_xy = x_ij*x_ij+y_ij*y_ij;
             float mu_ij = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
 
-            temp_i[k] = 0.01*C*mu_ij/fluid_i.rho; // use fluid density only, not the mean density
+            temp_i[k] = 0.01*C*mu_ij/fluid[i].rho; // use fluid density only, not the mean density
         }
 
-        float2 viscosity_fluid_boundary_i = sph_gradient(temp_i, fluid, boundary, i, j_neighbors, n_neighbors, MASS);
+        float2 viscosity_fluid_boundary_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
         du_dt_fluid_i += viscosity_fluid_boundary_i.x;
         dv_dt_fluid_i += viscosity_fluid_boundary_i.y;
 
@@ -434,32 +425,31 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
 //  of a surface from points, but it's currently not properly parameterized or optimized. On the other hand, it manages 
 //  to hook off of the existing neighbor-finding code and kernel function.
 
-void draw_metaballs(unsigned char *draw_buffer, struct particles *pixel_pseudoparticles, struct particles *fluid, 
+void draw_metaballs(unsigned char *draw_buffer, struct particle *pixel_pseudoparticles, struct particle *fluid, 
     struct neighbors_context *ctx_fluid)
 {
     int contributing_particles[MAX_POSSIBLE_NEIGHBORS], n_contributing_particles;
+    struct particle_neighbors neighbors;
     
     #pragma omp for collapse(2)
     for(int i = 0; i < 64; i++){
         for(int j = 0; j < 128; j++){
-            float pixel_x = pixel_pseudoparticles->x[i*128+j],
-                    pixel_y = pixel_pseudoparticles->y[i*128+j];
             int ij = i*128+j;
 
-            n_contributing_particles = find_neighbors(contributing_particles, pixel_pseudoparticles, fluid, ij, ctx_fluid);
+            n_contributing_particles = find_neighbors(contributing_particles, 
+                pixel_pseudoparticles, fluid, ij, ctx_fluid);
+            read_neighbors(fluid, contributing_particles, n_contributing_particles, &neighbors);
 
             float metaball_condition = 0;
             for(int k = 0; k < n_contributing_particles; k++){
-                int particle_index = contributing_particles[k];
-                float particle_x = fluid->x[particle_index],
-                        particle_y = fluid->y[particle_index];
-                
-                float distance = euclid_dist(particle_x, particle_y, pixel_x, pixel_y);
-                float q = distance/H;
+                struct particle fluid_j = particle_at(&neighbors, k);
+
+                float distance = euclid_dist(pixel_pseudoparticles[ij].x, 
+                    pixel_pseudoparticles[ij].y, fluid_j.x, fluid_j.y);
 
                 float unnormalizing_factor = (4*M_PI*H*H)/7;
                 float new_normalizing_factor = 1.0;
-                metaball_condition += new_normalizing_factor*unnormalizing_factor*W(q);
+                metaball_condition += new_normalizing_factor*unnormalizing_factor*W(distance/H);
 
                 if(metaball_condition >= 1) break;
             }
@@ -557,9 +547,9 @@ int main(){
             if(in_initial_shape(x_0, y_0)) n_fluid++;
     
     // alloc fluid and derivatives
-    struct particles *fluid, *fluid_pred;
-    fluid = alloc_particles(n_fluid);
-    fluid_pred = alloc_particles(n_fluid);
+    struct particle *fluid, *fluid_pred;
+    fluid = (struct particle*)malloc(n_fluid*sizeof(struct particle));
+    fluid_pred = (struct particle*)malloc(n_fluid*sizeof(struct particle));
     float *du_dt_pred = (float*)malloc(n_fluid*sizeof(float)), // momentum and continuity results for predictor step
           *dv_dt_pred = (float*)malloc(n_fluid*sizeof(float));
     float *du_dt_corr = (float*)malloc(n_fluid*sizeof(float)), // momentum and continuity results for corrector step
@@ -570,12 +560,12 @@ int main(){
     for(float x_0 = 0; x_0 < WIDTH; x_0 += R){
         for(float y_0 = 0; y_0 < HEIGHT; y_0 += R){
             if(in_initial_shape(x_0, y_0)){
-                fluid->x[particle_counter] = x_0;
-                fluid->y[particle_counter] = y_0;
-                fluid->u[particle_counter] = 0;
-                fluid->v[particle_counter] = 0;
-                fluid->m[particle_counter] = RHO_0*V;
-                fluid->rho[particle_counter] = RHO_0;
+                fluid[particle_counter].x = x_0;
+                fluid[particle_counter].y = y_0;
+                fluid[particle_counter].u = 0;
+                fluid[particle_counter].v = 0;
+                fluid[particle_counter].m = RHO_0*V;
+                fluid[particle_counter].rho = RHO_0;
 
                 particle_counter++;
             }
@@ -583,7 +573,7 @@ int main(){
     }
 
     // initialize mass of fluid_pred (will never change again)
-    for(int i = 0; i < n_fluid; i++) fluid_pred->m[i] = RHO_0*V;
+    for(int i = 0; i < n_fluid; i++) fluid_pred[i].m = RHO_0*V;
 
 
     // count the number of boundary particles we need
@@ -592,30 +582,30 @@ int main(){
     for(float y_0 = 0; y_0 < HEIGHT; y_0 += R) n_boundary += 2;
 
     // alloc boundary particles and derivatives
-    struct particles *boundary; 
-    boundary = alloc_particles(n_boundary);
+    struct particle *boundary; 
+    boundary = (struct particle*)malloc(n_boundary*sizeof(struct particle));
 
     // initialize boundary particles velocity and density (velocity will never change)
     for(int i = 0; i < n_boundary; i++){
-        boundary->u[i] = 0;
-        boundary->v[i] = 0;
-        boundary->rho[i] = RHO_0;
+        boundary[i].u = 0;
+        boundary[i].v = 0;
+        boundary[i].rho = RHO_0;
     }
 
     // initialize boundary particles locations (will never change)
     particle_counter = 0;
     for(float x_0 = 0; x_0 < WIDTH; x_0 += R){
-        boundary->x[particle_counter] = x_0;
-        boundary->y[particle_counter] = 0;
-        boundary->x[particle_counter+1] = x_0;
-        boundary->y[particle_counter+1] = HEIGHT;
+        boundary[particle_counter].x = x_0;
+        boundary[particle_counter].y = 0;
+        boundary[particle_counter+1].x = x_0;
+        boundary[particle_counter+1].y = HEIGHT;
         particle_counter += 2;
     }
     for(float y_0 = 0; y_0 < HEIGHT; y_0 += R){
-        boundary->x[particle_counter] = 0;
-        boundary->y[particle_counter] = y_0;
-        boundary->x[particle_counter+1] = WIDTH;
-        boundary->y[particle_counter+1] = y_0;
+        boundary[particle_counter].x = 0;
+        boundary[particle_counter].y = y_0;
+        boundary[particle_counter+1].x = WIDTH;
+        boundary[particle_counter+1].y = y_0;
         particle_counter += 2;
     }
 
@@ -627,8 +617,8 @@ int main(){
     // initialize neighbors search context
     float x_min = 0-R, x_max = WIDTH+R, y_min = 0-R, y_max = HEIGHT+R;
     struct neighbors_context *ctx_fluid, *ctx_boundary;
-    ctx_fluid = initialize_neighbors_context(fluid->count, x_min, x_max, y_min, y_max, 2*H);
-    ctx_boundary = initialize_neighbors_context(boundary->count, x_min, x_max, y_min, y_max, 2*H);
+    ctx_fluid = initialize_neighbors_context(n_fluid, x_min, x_max, y_min, y_max, 2*H);
+    ctx_boundary = initialize_neighbors_context(n_boundary, x_min, x_max, y_min, y_max, 2*H);
 
 
     update_neighbors_context(ctx_boundary, boundary); // this never needs to be called again, so we'll call it now
@@ -648,12 +638,12 @@ int main(){
     // in leiu of defining a new function for finding the contributing particles to the metaballs condition, we'll just 
     //   reuse the neighbors search function (called with ctx_fluid as the argument)
     // to do so, we define pseudoparticles at the pixel centers (not unlike how we do treat the boundary)
-    struct particles *pixel_pseudoparticles = alloc_particles(64*128);
+    struct particle *pixel_pseudoparticles = (struct particle*)malloc(64*128*sizeof(struct particle));
     for(int i = 0; i < 64; i++){
         for(int j = 0; j < 128; j++){
             float pixel_x = (j+0.5)*WIDTH/128, pixel_y = (64-(i+0.5))*HEIGHT/64;
-            pixel_pseudoparticles->x[i*128+j] = pixel_x;
-            pixel_pseudoparticles->y[i*128+j] = pixel_y;
+            pixel_pseudoparticles[i*128+j].x = pixel_x;
+            pixel_pseudoparticles[i*128+j].y = pixel_y;
         }
     }
 
@@ -684,17 +674,17 @@ int main(){
 
         // predictor step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
         calculate_density(fluid, boundary, ctx_fluid, ctx_boundary);
-        calculate_particle_pressure(fluid);
+        calculate_particle_pressure(fluid, n_fluid);
         calculate_accelerations(du_dt_pred, dv_dt_pred, fluid, boundary, ctx_fluid, ctx_boundary, g[0], g[1]);
 
         #pragma omp single
         {
             // predictor step: get what the particles would be like if we used forward Euler
             for(int i = 0; i < n_fluid; i++){
-                fluid_pred->x[i] = fluid->x[i] + fluid->u[i]*DT;
-                fluid_pred->y[i] = fluid->y[i] + fluid->v[i]*DT;
-                fluid_pred->u[i] = fluid->u[i] + du_dt_pred[i]*DT;
-                fluid_pred->v[i] = fluid->v[i] + dv_dt_pred[i]*DT;
+                fluid_pred[i].x = fluid[i].x + fluid[i].u*DT;
+                fluid_pred[i].y = fluid[i].y + fluid[i].v*DT;
+                fluid_pred[i].u = fluid[i].u + du_dt_pred[i]*DT;
+                fluid_pred[i].v = fluid[i].v + dv_dt_pred[i]*DT;
             }
 
             // corrector step: update the neighbors context using the predictor positions
@@ -703,17 +693,17 @@ int main(){
 
         // corrector step: calculate pressure and take the sum of contributions to the derivatives from the neighbors
         calculate_density(fluid_pred, boundary, ctx_fluid, ctx_boundary);
-        calculate_particle_pressure(fluid_pred);
+        calculate_particle_pressure(fluid_pred, n_fluid);
         calculate_accelerations(du_dt_corr, dv_dt_corr, fluid_pred, boundary, ctx_fluid, ctx_boundary, g[0], g[1]);
 
         #pragma omp single
         {
             // corrector step: step forward using the midpoint between the predictor and corrector derivatives
             for(int i = 0; i < n_fluid; i++){
-                fluid->x[i] += 0.5f*(fluid_pred->u[i] + fluid->u[i])*DT;
-                fluid->y[i] += 0.5f*(fluid_pred->v[i] + fluid->v[i])*DT;
-                fluid->u[i] += 0.5f*(du_dt_pred[i] + du_dt_corr[i])*DT;
-                fluid->v[i] += 0.5f*(dv_dt_pred[i] + dv_dt_corr[i])*DT;
+                fluid[i].x += 0.5f*(fluid_pred[i].u + fluid[i].u)*DT;
+                fluid[i].y += 0.5f*(fluid_pred[i].v + fluid[i].v)*DT;
+                fluid[i].u += 0.5f*(du_dt_pred[i] + du_dt_corr[i])*DT;
+                fluid[i].v += 0.5f*(dv_dt_pred[i] + dv_dt_corr[i])*DT;
             }
 
 
@@ -737,8 +727,8 @@ int main(){
             // compare avg_rho_ratio to worst_avg_rho_error_pct, which is the worst average rho ratio out of ALL frames
             // this is a critical statistic that shows to what degree the incompressibility constraint is being violated
             float temp = 0, avg_rho_error, avg_rho_error_pct;
-            for(int i = 0; i < fluid->count; i++) temp += fluid->rho[i];
-            avg_rho_error = temp / fluid->count - RHO_0;
+            for(int i = 0; i < n_fluid; i++) temp += fluid[i].rho;
+            avg_rho_error = temp / n_fluid - RHO_0;
             avg_rho_error_pct = avg_rho_error/RHO_0*100;
             if(avg_rho_error_pct > worst_avg_rho_error_pct) worst_avg_rho_error_pct = avg_rho_error;
 
