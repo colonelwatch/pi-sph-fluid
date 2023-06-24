@@ -636,30 +636,34 @@ int main(){
     calculate_accelerations(du_dt, dv_dt, fluid, boundary, ctx_fluid, ctx_boundary, g.x, g.y);
 
 
-    // main loop
+    // main loop, consisting of kick-drift-kick integration, drawing, and statistics reporting
     #pragma omp parallel num_threads(4)
     while(1){
         #pragma omp single
         {
+            // kick: update the velocities by half a time step using the previous accelerations
             for(int i = 0; i < n_fluid; i++){
                 fluid[i].u += 0.5*DT*du_dt[i];
                 fluid[i].v += 0.5*DT*dv_dt[i];
             }
 
+            // drift: update the positions by a full time step using the new velocities
             for(int i = 0; i < n_fluid; i++){
                 fluid[i].x += DT*fluid[i].u;
                 fluid[i].y += DT*fluid[i].v;
             }
 
-            update_neighbors_context(ctx_fluid, fluid);
+            update_neighbors_context(ctx_fluid, fluid); // update the neighbors context for the new positions
         }
 
+        // calculate the new accelerations from the new positions and new velocities
         calculate_density(fluid, boundary, ctx_fluid, ctx_boundary);
         calculate_particle_pressure(fluid, n_fluid);
         calculate_accelerations(du_dt, dv_dt, fluid, boundary, ctx_fluid, ctx_boundary, g.x, g.y);
 
         #pragma omp single
         {
+            // kick: update the velocities by half a time step using the new accelerations
             for(int i = 0; i < n_fluid; i++){
                 fluid[i].u += 0.5*DT*du_dt[i];
                 fluid[i].v += 0.5*DT*dv_dt[i];
