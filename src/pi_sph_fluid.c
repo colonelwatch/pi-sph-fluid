@@ -108,7 +108,7 @@ struct neighbors_context{
     struct linked_list_element *cells_elements; // unlike ordinary linked lists, the elements are together alloc'ed once
 };
 
-struct neighbors_context *initialize_neighbors_context(int n_particles, float x_min, float x_max, float y_min, 
+struct neighbors_context *alloc_neighbors_context(int n_particles, float x_min, float x_max, float y_min, 
     float y_max, float cell_length)
 {
     struct neighbors_context *ctx = (struct neighbors_context*)malloc(sizeof(struct neighbors_context));
@@ -586,31 +586,19 @@ int main(){
     printf("n_boundary = %d\n", n_boundary);
 
 
-    // initialize neighbors search context
-    float x_min = 0-R, x_max = WIDTH+R, y_min = 0-R, y_max = HEIGHT+R;
-    struct neighbors_context *ctx_fluid, *ctx_boundary;
-    ctx_fluid = initialize_neighbors_context(n_fluid, x_min, x_max, y_min, y_max, 2*H);
-    ctx_boundary = initialize_neighbors_context(n_boundary, x_min, x_max, y_min, y_max, 2*H);
-
-
-    update_neighbors_context(ctx_boundary, boundary); // this never needs to be called again, so we'll call it now
-    calculate_boundary_pseudomass(boundary, ctx_boundary);
-
-
     struct timespec now; // initialize the time-keeping with the current time
     clock_gettime(CLOCK_MONOTONIC, &now);
 
 
-    // launch the display thread
-    pthread_t display_thread;
+    struct particle *pixel_pseudoparticles;
     unsigned char *draw_buffer = (unsigned char*)calloc(1024, 1);
-    pthread_create(&display_thread, NULL, display_routine, draw_buffer);
-
+    struct timespec last_drew = now; // initialize the last-drew time to now
+    pthread_t display_thread;
 
     // in leiu of defining a new function for finding the contributing particles to the metaballs condition, we'll just 
     //   reuse the neighbors search function (called with ctx_fluid as the argument)
     // to do so, we define pseudoparticles at the pixel centers (not unlike how we do treat the boundary)
-    struct particle *pixel_pseudoparticles = (struct particle*)malloc(64*128*sizeof(struct particle));
+    pixel_pseudoparticles = (struct particle*)malloc(64*128*sizeof(struct particle));
     for(int i = 0; i < 64; i++){
         for(int j = 0; j < 128; j++){
             float pixel_x = (j+0.5)*WIDTH/128, pixel_y = (64-(i+0.5))*HEIGHT/64;
@@ -619,8 +607,7 @@ int main(){
         }
     }
 
-
-    struct timespec last_drew = now; // initialize the last-drew time to now
+    pthread_create(&display_thread, NULL, display_routine, draw_buffer); // launch the display thread
 
 
     // initialize gravity and the gravity-reading thread
@@ -630,18 +617,27 @@ int main(){
     pthread_create(&gravity_thread, NULL, get_gravity_routine, g);
 
 
-    // initialize statistics reporting and buffer drawing
+    // initialize statistics reporting
     float worst_avg_rho_error_pct = 0;
     float t = 0, last_t = 0;
     struct timespec last_reported = now;
-    clock_gettime(CLOCK_MONOTONIC, &last_reported);
 
 
+    // alloc neighbors search context
+    const float x_min = 0-R, x_max = WIDTH+R, y_min = 0-R, y_max = HEIGHT+R;
+    struct neighbors_context *ctx_fluid  = alloc_neighbors_context(n_fluid, x_min, x_max, y_min, y_max, 2*H), 
+                             *ctx_boundary = alloc_neighbors_context(n_boundary, x_min, x_max, y_min, y_max, 2*H);
+
+    // initialize context and masses of the boundary particles (these two functions never need to be called again)
+    update_neighbors_context(ctx_boundary, boundary);
+    calculate_boundary_pseudomass(boundary, ctx_boundary);
+
+    // initialize du_dt and dv_dt with the accelerations for the zero-th time step
     update_neighbors_context(ctx_fluid, fluid);
-
     calculate_density(fluid, boundary, ctx_fluid, ctx_boundary);
     calculate_particle_pressure(fluid, n_fluid);
     calculate_accelerations(du_dt, dv_dt, fluid, boundary, ctx_fluid, ctx_boundary, g[0], g[1]);
+
 
     // main loop
     #pragma omp parallel num_threads(4)
