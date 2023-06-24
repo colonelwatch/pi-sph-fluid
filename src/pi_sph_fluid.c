@@ -382,6 +382,10 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             // compute parts of the momentum-conserving pressure from boundary neighbors
             float pressure_ij = -fluid[i].p/(fluid[i].rho*fluid[i].rho);
             
+            // compute parts of the artificial pressure mentioned by Macklin 2013 (PBF) from boundary neighbors
+            float W_ij = W(euclid_dist(fluid[i].x, fluid[i].y, boundary_j.x, boundary_j.y) / H);
+            float artifical_pressure_ij = -0.1*powf(W_ij/W(0.2*H), 4);
+            
             // compute parts of the viscosity from boundary neighbors
             float u_ij = fluid[i].u-boundary_j.u, v_ij = fluid[i].v-boundary_j.v;
             float x_ij = fluid[i].x-boundary_j.x, y_ij = fluid[i].y-boundary_j.y;
@@ -390,7 +394,7 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             float mu_ij = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
             float viscosity_ij = 0.01*C*mu_ij/fluid[i].rho; // use fluid density only, not the mean density
 
-            temp_i[k] = pressure_ij+viscosity_ij;
+            temp_i[k] = pressure_ij+artifical_pressure_ij+viscosity_ij;
         }
 
         // compute the acceleration due to boundary neighbors
