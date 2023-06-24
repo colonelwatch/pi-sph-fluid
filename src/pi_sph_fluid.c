@@ -526,65 +526,64 @@ int main(){
     ssd1306_clearScreen();
     
     
+    int n_fluid;
+    struct particle *fluid;
+    float *du_dt, *dv_dt;
+    
     // count the number of fluid particles we need
-    int n_fluid = 0;
+    n_fluid = 0;
     for(float x_0 = 0; x_0 < WIDTH; x_0 += R)
         for(float y_0 = 0; y_0 < HEIGHT; y_0 += R)
             if(in_initial_shape(x_0, y_0)) n_fluid++;
     
     // alloc fluid and derivatives
-    struct particle *fluid = (struct particle*)malloc(n_fluid*sizeof(struct particle));
-    float *du_dt = (float*)malloc(n_fluid*sizeof(float)), // momentum and continuity results for predictor step
-          *dv_dt = (float*)malloc(n_fluid*sizeof(float));
+    fluid = (struct particle*)malloc(n_fluid*sizeof(struct particle));
+    du_dt = (float*)malloc(n_fluid*sizeof(float));
+    dv_dt = (float*)malloc(n_fluid*sizeof(float));
     
     // initialize fluid particles
     particle_counter = 0;
     for(float x_0 = 0; x_0 < WIDTH; x_0 += R){
         for(float y_0 = 0; y_0 < HEIGHT; y_0 += R){
             if(in_initial_shape(x_0, y_0)){
-                fluid[particle_counter].x = x_0;
-                fluid[particle_counter].y = y_0;
-                fluid[particle_counter].u = 0;
-                fluid[particle_counter].v = 0;
-                fluid[particle_counter].m = RHO_0*V;
-                fluid[particle_counter].rho = RHO_0;
-
+                fluid[particle_counter] = (struct particle){
+                    .x = x_0, .y = y_0, .u = 0, .v = 0, 
+                    .m = RHO_0*V, .rho = RHO_0 }; // no need to initialize .p (updated later)
                 particle_counter++;
             }
         }
     }
 
 
+    int n_boundary;
+    struct particle *boundary;
+    
     // count the number of boundary particles we need
-    int n_boundary = 0;
+    n_boundary = 0;
     for(float x_0 = 0; x_0 < WIDTH; x_0 += R) n_boundary += 2;
     for(float y_0 = 0; y_0 < HEIGHT; y_0 += R) n_boundary += 2;
 
-    // alloc boundary particles and derivatives
-    struct particle *boundary; 
+    // alloc boundary particles
     boundary = (struct particle*)malloc(n_boundary*sizeof(struct particle));
 
-    // initialize boundary particles velocity and density (velocity will never change)
-    for(int i = 0; i < n_boundary; i++){
-        boundary[i].u = 0;
-        boundary[i].v = 0;
-        boundary[i].rho = RHO_0;
-    }
-
-    // initialize boundary particles locations (will never change)
+    // initialize boundary particles properties
     particle_counter = 0;
     for(float x_0 = 0; x_0 < WIDTH; x_0 += R){
-        boundary[particle_counter].x = x_0;
-        boundary[particle_counter].y = 0;
-        boundary[particle_counter+1].x = x_0;
-        boundary[particle_counter+1].y = HEIGHT;
+        boundary[particle_counter] = (struct particle){
+            .x = x_0, .y = 0, .u = 0, .v = 0,
+            .rho = RHO_0 }; // no need to initialize .m (calculated once later) or .p (never relevant)
+        boundary[particle_counter+1] = (struct particle){
+            .x = x_0, .y = HEIGHT, .u = 0, .v = 0,
+            .rho = RHO_0 };
         particle_counter += 2;
     }
     for(float y_0 = 0; y_0 < HEIGHT; y_0 += R){
-        boundary[particle_counter].x = 0;
-        boundary[particle_counter].y = y_0;
-        boundary[particle_counter+1].x = WIDTH;
-        boundary[particle_counter+1].y = y_0;
+        boundary[particle_counter] = (struct particle){
+            .x = 0, .y = y_0, .u = 0, .v = 0,
+            .rho = RHO_0 };
+        boundary[particle_counter+1] = (struct particle){
+            .x = WIDTH, .y = y_0, .u = 0, .v = 0,
+            .rho = RHO_0 };
         particle_counter += 2;
     }
 
