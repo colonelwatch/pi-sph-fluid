@@ -615,7 +615,7 @@ int main(){
 
 
     // initialize statistics reporting
-    float worst_avg_rho_error_pct = 0;
+    float worst_max_rho_error_pct = 0, max_max_speed = 0;
     float t = 0, last_t = 0;
     struct timespec last_reported = now;
 
@@ -686,14 +686,25 @@ int main(){
         #pragma omp single
         {    
             // record the average rho ratio in a single frame as avg_rho_ratio
+            float max_rho_error = 0, max_rho_error_pct;
+            for(int i = 0; i < n_fluid; i++)
+                if(fluid[i].rho > max_rho_error) max_rho_error = fluid[i].rho-RHO_0;
+            max_rho_error_pct = max_rho_error/RHO_0*100;
+
             // compare avg_rho_ratio to worst_avg_rho_error_pct, which is the worst average rho ratio out of ALL frames
             // this is a critical statistic that shows to what degree the incompressibility constraint is being violated
-            float temp = 0, avg_rho_error, avg_rho_error_pct;
-            for(int i = 0; i < n_fluid; i++) temp += fluid[i].rho;
-            avg_rho_error = temp / n_fluid - RHO_0;
-            avg_rho_error_pct = avg_rho_error/RHO_0*100;
-            if(avg_rho_error_pct > worst_avg_rho_error_pct) worst_avg_rho_error_pct = avg_rho_error;
+            if(max_rho_error_pct > worst_max_rho_error_pct) worst_max_rho_error_pct = max_rho_error_pct;
 
+            // record the maximum speed in a single frame as max_speed
+            float max_speed = 0;
+            for(int i = 0; i < n_fluid; i++){
+                float speed = sqrt(fluid[i].u*fluid[i].u + fluid[i].v*fluid[i].v);
+                if(speed > max_speed) max_speed = speed;
+            }
+
+            // compare max_speed to max_max_speed, which is the worst maximum speed out of ALL frames
+            // this is a critical statistic that shows to what degree the maximum speed constraint is being violated
+            if(max_speed > max_max_speed) max_max_speed = max_speed;
             
             // report frame rate and other statistics
             t += DT;
@@ -701,10 +712,10 @@ int main(){
                 float elapsed = (now.tv_sec-last_reported.tv_sec) + (now.tv_nsec-last_reported.tv_nsec)/1e9;
                 int tps = ((t-last_t)/DT)/elapsed;
 
-                printf("t=%.2f, ", t);
-                printf("ticks/s = %d, ", tps);
-                printf("worst avg rho error = %.3f\%%, ", worst_avg_rho_error_pct);
-                printf("current avg rho error = %.3f\%%, ", avg_rho_error_pct);
+                printf("sim time: %.2f, ", t);
+                printf("ticks/s: %d, ", tps);
+                printf("max rho error: %.3f\%% (worst) %.3f\%%, ", max_rho_error_pct, worst_max_rho_error_pct);
+                printf("max speed: %.1f m/s (worst) %.1f m/s, ", max_speed, max_max_speed);
                 printf("\n");
 
                 last_t = t;
