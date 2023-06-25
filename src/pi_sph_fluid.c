@@ -6,8 +6,7 @@
 
 #include <ssd1306.h>
 
-#define DT 2.5e-4f       // s, time step (stability condition proportional to H/C?)
-#define R 0.1000f        // m, initial spacing
+#define R 0.1000f        // m, initial spacing (real ticks/s is O(R^3), but DT is O(R), so realtime implies intersect)
 #define H (R*1.3f)       // m, smoothing length
 #define WIDTH 4.0f       // m, width of domain
 #define HEIGHT 2.0f      // m, height of domain
@@ -15,6 +14,7 @@
 #define C 160.0f         // m/s, "numerical" speed of sound (10*max_speed for correct WCSPH)
 #define G 9.81f          // m/s^2, gravitational acceleration
 
+#define DT (0.4f*H/C)    // s, time step (CFL condition? DT <= 0.4*H/C)
 #define V (0.83*H*H)     // m^3, volume of each fluid particle
 #define MAX_POSSIBLE_NEIGHBORS 48 // the sum of the first three hexagonal numbers is 22, so this should be enough
 
@@ -576,7 +576,7 @@ int main(){
         particle_counter += 2;
     }
 
-
+    printf("dt = %f    (expected ticks/s) %d\n", DT, (int)(1/DT));
     printf("n_fluid = %d\n", n_fluid);
     printf("n_boundary = %d\n", n_boundary);
 
