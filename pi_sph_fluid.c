@@ -6,6 +6,7 @@
 
 #include <ssd1306.h>
 
+#define REALTIME         // comment out to stop enforcing real-time simulation speed (useful for benchmarking)
 #define R 0.0600f        // m, initial spacing (real ticks/s is O(R^3), but DT is O(R), so realtime implies intersect)
 #define H (R*1.3f)       // m, smoothing length
 #define WIDTH 4.0f       // m, width of domain
@@ -610,6 +611,12 @@ int main(){
     struct timespec last_reported = now;
 
 
+    #ifdef REALTIME
+    // init the last-stepped time to now (will be used for enforcing realtime)
+    struct timespec last_stepped = now;
+    #endif
+
+
     // alloc neighbors search context
     const float x_min = 0-R, x_max = WIDTH+R, y_min = 0-R, y_max = HEIGHT+R;
     struct neighbors_context *ctx_fluid  = alloc_neighbors_context(n_fluid, x_min, x_max, y_min, y_max, 2*H), 
@@ -711,6 +718,16 @@ int main(){
                 last_t = t;
                 last_reported = now;
             }
+
+
+            #ifdef REALTIME
+            int elapsed_ns;
+            do { // enforce real-time by spin-waiting (TODO: find a better way?)
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                elapsed_ns = (now.tv_sec-last_stepped.tv_sec)*1000000000+(now.tv_nsec-last_stepped.tv_nsec);
+            } while(elapsed_ns < (int)(DT*1e9) - 30000); // ); // 30 us to compensate some overhead?
+            last_stepped = now;
+            #endif
         }
     }
 }
