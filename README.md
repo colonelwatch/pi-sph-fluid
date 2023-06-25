@@ -20,11 +20,15 @@ make desktop desktop_sph_fluid
 2. `pi_sph_fluid` generates the same, but with gravity determined by reading the MPU6050 accelerometer. The driver for that needs to be enabled by telling Linux that there is one on the I2C bus. All the necessary commands are
 
 ```bash
+echo dtparam=i2c_arm=on,1000000 | sudo tee -a /boot/config.txt # enable i2c with a default speed of 1 MHz
+echo dtoverlay=mpu6050 | sudo tee -a /boot/config.txt # pull up device tree overlay for mpu6050
+sudo reboot
+
 git clone https://github.com/colonelwatch/pi-sph-fluid
 git submodule update --init ssd1306
 make pi_sph_fluid
 
-echo mpu6050 0x68 | sudo tee /sys/bus/i2c/devices/i2c-1/new_device
+echo 10 | sudo tee /sys/bus/iio/devices/iio:device0/sampling_frequency
 ```
 
 ## What's implemented?
