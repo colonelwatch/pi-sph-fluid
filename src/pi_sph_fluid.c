@@ -6,12 +6,12 @@
 
 #include <ssd1306.h>
 
-#define R 0.1000f        // m, initial spacing (real ticks/s is O(R^3), but DT is O(R), so realtime implies intersect)
+#define R 0.0800f        // m, initial spacing (real ticks/s is O(R^3), but DT is O(R), so realtime implies intersect)
 #define H (R*1.3f)       // m, smoothing length
 #define WIDTH 4.0f       // m, width of domain
 #define HEIGHT 2.0f      // m, height of domain
 #define RHO_0 1000.0f    // kg/m^3, reference density
-#define C 160.0f         // m/s, "numerical" speed of sound (10*max_speed for correct WCSPH)
+#define C 200.0f         // m/s, "numerical" speed of sound (10*max_speed for correct WCSPH)
 #define G 9.81f          // m/s^2, gravitational acceleration
 
 #define DT (0.4f*H/C)    // s, time step (CFL condition? DT <= 0.4*H/C)
