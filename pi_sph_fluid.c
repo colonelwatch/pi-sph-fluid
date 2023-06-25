@@ -496,7 +496,7 @@ void* get_gravity_routine(void *arg){
 
 void* display_routine(void *arg){
     unsigned char *display_buffer = (unsigned char*)arg;
-
+    ssd1306_128x64_i2c_init(); // initialize display
     while(1) ssd1306_drawBufferFast(0, 0, 128, 64, display_buffer);
 }
 
@@ -600,8 +600,6 @@ int main(){
             pixel_pseudoparticles[i*128+j].y = pixel_y;
         }
     }
-
-    ssd1306_128x64_i2c_init(); // initialize display
 
     pthread_create(&display_thread, NULL, display_routine, draw_buffer); // launch the display thread
 
