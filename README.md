@@ -2,7 +2,7 @@
 
 ![headliner](headliner.jpg)
 
-This project uses an SSD1306 OLED module, an MPU6050 accelerometer, and a Raspberry Pi 4 to realize a fluid simulation toy that lets you toss around an ocean of water in your hand. (That is, it simulates fluid dynamics at a scale larger than the actual screen.) This can be thought of as a "free-surface flow" problem, and it's solved by a "smoothed particle hydrodynamics" (SPH) technique.
+This project uses an SSD1306 OLED module, an MPU6050 accelerometer, and a Raspberry Pi 4 to realize a fluid simulation toy that lets you toss around an ocean of water in your hand. (That is, it simulates fluid dynamics at a scale larger than the actual screen.) You can see it in action on [Youtube](https://youtu.be/6_YntT-Zha0). This can be thought of as a "free-surface flow" problem, and it's solved by a "smoothed particle hydrodynamics" (SPH) technique.
 
 ## Running
 
