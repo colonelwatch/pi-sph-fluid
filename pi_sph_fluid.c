@@ -313,7 +313,8 @@ void calculate_density(struct particle *fluid, struct particle *boundary, struct
         read_neighbors(boundary, j_neighbors, n_neighbors, &neighbors);
         float density_fluid_boundary = sph(ones, fluid[i], &neighbors, MASS);
 
-        fluid[i].rho = density_fluid_fluid+density_fluid_boundary;
+        // 1.293 is the density of air (adding it here seemed to prevent instability after a couple minutes)
+        fluid[i].rho = 1.293+density_fluid_fluid+density_fluid_boundary;
     }
 }
 
