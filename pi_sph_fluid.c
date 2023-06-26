@@ -39,20 +39,20 @@ typedef struct { float x, y; } float2; // Helper struct for returning two floats
 
 float euclid_dist(float x_i, float y_i, float x_j, float y_j){
     float x_ij = x_i-x_j, y_ij = y_i-y_j;
-    return sqrt(x_ij*x_ij+y_ij*y_ij);
+    return sqrtf(x_ij*x_ij+y_ij*y_ij);
 }
 
 float W(float q){
     const float normalizing_factor = 7/(4*M_PI*H*H);
     float tmp_1 = 1-0.5f*q, tmp_2 = 1+2*q;
-    return normalizing_factor*pow(tmp_1, 4)*tmp_2; // Wendland C2 kernel, though cubic spline probably also works
+    return normalizing_factor*powf(tmp_1, 4)*tmp_2; // Wendland C2 kernel, though cubic spline probably also works
 }
 
 float2 grad_a_W_ab(float x_i, float y_i, float x_j, float y_j){
     const float normalizing_factor = 7/(4*M_PI*H*H);
     float q = euclid_dist(x_i, y_i, x_j, y_j)/H;
     float tmp = 1-0.5f*q;
-    float dW_dq_ij = normalizing_factor*(-5)*q*pow(tmp, 3); // Wendland C2 kernel
+    float dW_dq_ij = normalizing_factor*(-5)*q*powf(tmp, 3); // Wendland C2 kernel
     
     float dq_dx_a_ij = (x_i-x_j)/euclid_dist(x_i, y_i, x_j, y_j)/H;
     float dq_dy_a_ij = (y_i-y_j)/euclid_dist(x_i, y_i, x_j, y_j)/H;
@@ -319,7 +319,7 @@ void calculate_particle_pressure(struct particle *particles, int n_particles){
     #pragma omp for
     for(int i = 0; i < n_particles; i++){
         const float B = C*C*RHO_0/7;
-        float pressure_i = B * (pow(particles[i].rho/RHO_0, 7) - 1);
+        float pressure_i = B * (powf(particles[i].rho/RHO_0, 7) - 1);
         particles[i].p = (pressure_i > 0)? pressure_i : 0;
     }
 }
@@ -689,7 +689,7 @@ int main(){
             // record the maximum speed in a single frame as max_speed
             float max_speed = 0;
             for(int i = 0; i < n_fluid; i++){
-                float speed = sqrt(fluid[i].u*fluid[i].u + fluid[i].v*fluid[i].v);
+                float speed = sqrtf(fluid[i].u*fluid[i].u + fluid[i].v*fluid[i].v);
                 if(speed > max_speed) max_speed = speed;
             }
 
