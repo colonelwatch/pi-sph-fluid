@@ -20,7 +20,7 @@
 #define MAX_POSSIBLE_NEIGHBORS 48 // the sum of the first three hexagonal numbers is 22, so this should be enough
 
 
-// PARTICLES
+// GENERAL STRUCTS
 
 struct particle{ // struct representing a single particle
     float x, y, u, v; // intrinsic values
@@ -29,10 +29,7 @@ struct particle{ // struct representing a single particle
     float p; // pressure is derived from some incompressible-enforcing routine (here being WCSPH)
 };
 
-
-// VECTOR RETURN-ELEMENT
-// Helper struct for returning two floats from vector-valued functions
-typedef struct { float x, y; } float2;
+typedef struct { float x, y; } float2; // Helper struct for returning two floats from vector-valued functions
 
 
 // THE KERNEL AND ITS DERIVATIVE
@@ -252,8 +249,8 @@ float2 sph_gradient(float *quantity, struct particle particle_i, struct particle
         float2 grad_i_W_ij = grad_a_W_ab(particle_i.x, particle_i.y, neighbor_j.x, neighbor_j.y);
         float leading_factor_j = (leading_factor == MASS)? neighbor_j.m : neighbor_j.m/neighbor_j.rho;
 
-        grad_quantity.x += leading_factor_j*quantity[k]*grad_i_W_ij.x;
-        grad_quantity.y += leading_factor_j*quantity[k]*grad_i_W_ij.y;
+        grad_quantity.x += leading_factor_j * quantity[k] * grad_i_W_ij.x;
+        grad_quantity.y += leading_factor_j * quantity[k] * grad_i_W_ij.y;
     }
 
     return grad_quantity;
@@ -261,8 +258,7 @@ float2 sph_gradient(float *quantity, struct particle particle_i, struct particle
 
 
 // MAIN FUNCTIONS
-// These functions are responsible for principal parts of the fluid simulation. Exact implementation of Monaghan 1994 
-//  to the best of my ability with the exception of leaving artificial viscosity on all the time
+// These functions are responsible for principal parts of the fluid simulation. Heavily based on Monaghan 1994.
 
 // To start, arrange the SPH particles as a circle in the middle of the domain
 int in_initial_shape(float x, float y){
@@ -286,9 +282,7 @@ void calculate_boundary_pseudomass(struct particle *boundary, struct neighbors_c
             recip_volume += W(euclid_dist(boundary[i].x, boundary[i].y, boundary_j.x, boundary_j.y) / H);
         }
 
-        float m_i = boundary[i].rho / recip_volume;
-
-        boundary[i].m = m_i;
+        boundary[i].m = boundary[i].rho / recip_volume;
     }
 }
 
@@ -319,15 +313,13 @@ void calculate_density(struct particle *fluid, struct particle *boundary, struct
 }
 
 // "slighly compressible" SPH, or weakly-compressible SPH (WCSPH) expresses pressure as an explicit function of density,
-//  not an implicit one needing an iterative solver. Sometimes doesn't use the true speed of sound in a fluid, and
-//  rather uses some number high enough that the density doesn't vary by too many percents. That's also how I did it
-//  here because I saw that using the true speed caused instability. See Monaghan 1994 or Monaghan 2005.
+//  not an implicit one needing an iterative solver. Generally doesn't use the true speed of sound in a fluid, and
+//  rather uses some number high enough that the density doesn't vary by too many percents. See Monaghan 1994 and 2005.
 void calculate_particle_pressure(struct particle *particles, int n_particles){
     #pragma omp for
     for(int i = 0; i < n_particles; i++){
         const float B = C*C*RHO_0/7;
-        float rho_ratio = particles[i].rho/RHO_0;
-        float pressure_i = B*(pow(rho_ratio, 7)-1);
+        float pressure_i = B * (pow(particles[i].rho/RHO_0, 7) - 1);
         particles[i].p = (pressure_i > 0)? pressure_i : 0;
     }
 }
@@ -509,6 +501,7 @@ int main(){
     int particle_counter; // when the number of particles is determined numerically, this is used to count them
 
 
+    // variables related to the fluid particles
     int n_fluid;
     struct particle *fluid;
     float *du_dt, *dv_dt;
@@ -538,6 +531,7 @@ int main(){
     }
 
 
+    // variables related to the boundary particles
     int n_boundary;
     struct particle *boundary;
     
@@ -570,6 +564,7 @@ int main(){
         particle_counter += 2;
     }
 
+
     printf("dt = %f    (expected ticks/s) %d\n", DT, (int)(1/DT));
     printf("n_fluid = %d\n", n_fluid);
     printf("n_boundary = %d\n", n_boundary);
@@ -586,6 +581,7 @@ int main(){
     pthread_create(&gravity_thread, NULL, get_gravity_routine, &g);
 
 
+    // variables related to the display thread and drawing the fluid
     struct particle *pixel_pseudoparticles;
     unsigned char *draw_buffer = (unsigned char*)calloc(1024, 1);
     struct timespec last_drew = now; // initialize the last-drew time to now
@@ -633,8 +629,7 @@ int main(){
     calculate_particle_pressure(fluid, n_fluid);
     calculate_accelerations(du_dt, dv_dt, fluid, boundary, ctx_fluid, ctx_boundary, g.x, g.y);
 
-
-    // main loop, consisting of kick-drift-kick integration, drawing, and statistics reporting
+    // main loop, consisting of leapfrog integration, drawing, and statistics reporting
     #pragma omp parallel num_threads(4)
     while(1){
         #pragma omp single
@@ -667,16 +662,14 @@ int main(){
                 fluid[i].v += 0.5*DT*dv_dt[i];
             }
 
+
             clock_gettime(CLOCK_MONOTONIC, &now); // take a single timestamp for the below real-time operations
         }
 
 
         // draw fluid using metaballs
-        float elapsed = (now.tv_sec-last_drew.tv_sec) + (now.tv_nsec-last_drew.tv_nsec)/1e9;
-        if(elapsed > 1.0/60){
+        if((now.tv_sec-last_drew.tv_sec)*1000000000 + (now.tv_nsec-last_drew.tv_nsec) > 1000000000/60){
             draw_metaballs(draw_buffer, pixel_pseudoparticles, fluid, ctx_fluid);
-
-            #pragma omp single
             last_drew = now;
         }
 
