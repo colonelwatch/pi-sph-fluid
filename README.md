@@ -42,24 +42,42 @@ echo 10 | sudo tee /sys/bus/iio/devices/iio:device0/sampling_frequency
 
 Besides the ssd1306 driver, this project is just under 750 lines of C! Here's what this project implements in that many lines:
 
-1. Linked-list neighbors search, a common technique but outlined well in Domínguez 2011
-2. Weakly-compressible smoothed particle hydrodynamics (WCSPH), completely described in Monaghan 2005 and Monaghan 1994
+1. Linked-list neighbors search, a common technique but outlined well in [1]
+2. Weakly-compressible smoothed particle hydrodynamics (WCSPH), completely described in [2] and [3]
     * Artificial viscosity and momentum-preserving pressure, described in the same
     * Ordinary advection (not XSPH)
-    * Working around negative density error by clamping negative pressure to zero, mentioned in the IISPH, DFSPH, and PBF papers (Ihmsen 2014, Bender 2015, and Macklin 2013 respectively) along with other papers
-3. Boundary handling offered by Akinci 2012
-4. Fake surface tension effects using artificial pressure, mentioned in Macklin 2013
-5. Rendering using metaballs, following the original implementation in Blinn 1982
+    * Working around negative density error by clamping negative pressure to zero, mentioned in the IISPH, DFSPH, and PBF papers ([4-6] respectively) along with other papers
+3. Boundary handling offered by [7]
+4. Fake surface tension effects using artificial pressure, mentioned in [6]
+5. Rendering using metaballs, following the original implementation in [8]
 6. OpenMP acceleration
 
 ## What's not implemented?
 
 This project really sits on the ground floor of SPH, and some next steps include:
 
-1. Z-order or some other -order sort of particles for a higher cache hit rate
+1. Z-order or some other -order sort of particles for a higher cache hit rate, as described in [1]
     * Ideally, this sort should be multithreaded
 2. Inferring velocity from accelerations taken from the MPU6050 and assigning that velocity to the boundary
     * This would add a bit more realism to the fluid simulation
 3. GPU acceleration or an implementation of one of the incompressible schemes (PCISPH, IISPH, DFSPH, PBF, etc)
     * There's a failed attempt at IISPH in the `IISPH` branch
     * Some of the most interesting fluid phenomena don't arise in the small number of particles that CPU WCSPH can handle without going unstable (currently 650)
+
+## References
+
+[1] J. M. Domínguez, A. J. C. Crespo, M. Gómez-Gesteira, and J. C. Marongiu, “Neighbour lists in smoothed particle hydrodynamics,” International Journal for Numerical Methods in Fluids, vol. 67, no. 12, pp. 2026–2042, 2011, doi: 10.1002/fld.2481.
+
+[2] J. J. Monaghan, “Smoothed particle hydrodynamics,” Reports on progress in physics, vol. 68, no. 8, p. 1703, 2005.
+
+[3] J. J. Monaghan, “Simulating Free Surface Flows with SPH,” Journal of Computational Physics, vol. 110, no. 2, pp. 399–406, 1994, doi: 10.1006/jcph.1994.1034.
+
+[4] M. Ihmsen, J. Cornelis, B. Solenthaler, C. Horvath, and M. Teschner, “Implicit Incompressible SPH,” IEEE Transactions on Visualization and Computer Graphics, vol. 20, no. 3, pp. 426–435, Mar. 2014, doi: 10.1109/TVCG.2013.105.
+
+[5] J. Bender and D. Koschier, “Divergence-free smoothed particle hydrodynamics,” in Proceedings of the 14th ACM SIGGRAPH / Eurographics Symposium on Computer Animation, Los Angeles California: ACM, Aug. 2015, pp. 147–155. doi: 10.1145/2786784.2786796.
+
+[6] M. Macklin and M. Müller, “Position based fluids,” ACM Trans. Graph., vol. 32, no. 4, pp. 1–12, Jul. 2013, doi: 10.1145/2461912.2461984.
+
+[7] N. Akinci, M. Ihmsen, G. Akinci, B. Solenthaler, and M. Teschner, “Versatile rigid-fluid coupling for incompressible SPH,” ACM Trans. Graph., vol. 31, no. 4, pp. 1–8, Aug. 2012, doi: 10.1145/2185520.2185558.
+
+[8] J. F. Blinn, “A Generalization of Algebraic Surface Drawing,” ACM Trans. Graph., vol. 1, no. 3, pp. 235–256, Jul. 1982, doi: 10.1145/357306.357310.
