@@ -3,6 +3,7 @@
 #include <math.h>
 #include <pthread.h>
 #include <time.h>
+#include <limits.h>
 
 #include <ssd1306.h>
 
@@ -76,8 +77,8 @@ struct neighbors_context{
     float cell_length;
     int n_cells, m_cells;
     int n_particles;
-    int *cells_head, *particles_next;   // faster linked list using memory alloc'ed once and for all
-    int *cells_tail;                    // cells_tail is for constructing the linked list
+    unsigned short *cells_head, *particles_next;   // faster linked list using memory alloc'ed once and for all
+    unsigned short *cells_tail;                    // cells_tail is for constructing the linked list
 };
 
 struct neighbors_context *alloc_neighbors_context(int n_particles, float x_min, float x_max, float y_min, 
@@ -93,12 +94,13 @@ struct neighbors_context *alloc_neighbors_context(int n_particles, float x_min, 
 
     ctx->n_cells = (int)((y_max-y_min)/cell_length)+1;
     ctx->m_cells = (int)((x_max-x_min)/cell_length)+1;
-    ctx->cells_head = (int*)malloc(ctx->n_cells * ctx->m_cells * sizeof(int));
-    ctx->cells_tail = (int*)malloc(ctx->n_cells * ctx->m_cells * sizeof(int));
+    ctx->cells_head = (unsigned short*)malloc(ctx->n_cells * ctx->m_cells * sizeof(unsigned short));
+    ctx->cells_tail = (unsigned short*)malloc(ctx->n_cells * ctx->m_cells * sizeof(unsigned short));
     
     ctx->n_particles = n_particles;
-    ctx->particles_next = (int*)malloc(n_particles * sizeof(int));
-    for(int i = 0; i < n_particles; i++) ctx->particles_next[i] = -1;
+    ctx->particles_next = (unsigned short*)malloc(n_particles * sizeof(unsigned short));
+    for(int i = 0; i < n_particles; i++)
+        ctx->particles_next[i] = USHRT_MAX; // we'll use USHRT_MAX to indicate the end of a linked list
     
     return ctx;
 }
@@ -106,7 +108,7 @@ struct neighbors_context *alloc_neighbors_context(int n_particles, float x_min, 
 void update_neighbors_context(struct neighbors_context *ctx, struct particle *particles){
     // reset the linked lists (note that this doesn't orphan the elements)
     for(int ij_cell = 0; ij_cell < ctx->n_cells * ctx->m_cells; ij_cell++)
-        ctx->cells_head[ij_cell] = ctx->cells_tail[ij_cell] = -1;
+        ctx->cells_head[ij_cell] = ctx->cells_tail[ij_cell] = USHRT_MAX;
 
     // for each particle, infer the cell it falls in
     for(int i = 0; i < ctx->n_particles; i++){
@@ -114,14 +116,14 @@ void update_neighbors_context(struct neighbors_context *ctx, struct particle *pa
         int j_cell = (int)((particles[i].x - ctx->x_min) / ctx->cell_length);
         int ij_cell = i_cell * ctx->m_cells + j_cell;
 
-        if(ctx->cells_head[ij_cell] == -1)
+        if(ctx->cells_head[ij_cell] == USHRT_MAX)
             ctx->cells_head[ij_cell] = ctx->cells_tail[ij_cell] = i;
         else{
             int i_tail = ctx->cells_tail[ij_cell];
             ctx->particles_next[i_tail] = i;
             ctx->cells_tail[ij_cell] = i;
         }
-        ctx->particles_next[i] = -1;
+        ctx->particles_next[i] = USHRT_MAX;
     }
 }
 
@@ -141,8 +143,8 @@ int find_neighbors(int *j_neighbors, struct particle *particles_a, struct partic
                 continue;
             int ij_cell = i_cell * ctx_b->m_cells + j_cell;
 
-            int j = ctx_b->cells_head[ij_cell];
-            while(j != -1){
+            unsigned short j = ctx_b->cells_head[ij_cell];
+            while(j != USHRT_MAX){
                 float distance = euclid_dist(particles_a[i].x, particles_a[i].y, particles_b[j].x, particles_b[j].y);
 
                 if(distance < 2*H && (ignore_self_interaction || i != j)){
@@ -548,6 +550,8 @@ int main(){
     printf("dt = %f    (expected ticks/s) %d\n", DT, (int)(1/DT));
     printf("n_fluid = %d\n", n_fluid);
     printf("n_boundary = %d\n", n_boundary);
+    if(n_fluid >= USHRT_MAX) printf("WARNING: n_fluid >= USHRT_MAX, overflow of index variable expected\n");
+    if(n_boundary >= USHRT_MAX) printf("WARNING: n_boundary >= USHRT_MAX, overflow of index variable expected\n");
 
 
     struct timespec now; // initialize the time-keeping with the current time
