@@ -22,8 +22,11 @@ make desktop_sph_fluid
 2. `pi_sph_fluid` generates the same but with gravity determined by reading the MPU6050 accelerometer. I2C and the driver for accelerometer need to be enabled by configuring `/boot/config.txt`. All the necessary commands are
 
 ```bash
+sudo apt install git
+
 # configure /boot/config.txt (you can also write these lines in manually)
-echo dtparam=i2c_arm=on,1000000 | sudo tee -a /boot/config.txt # enable i2c with a default speed of 1 MHz
+sudo raspi-config nonint do_i2c 0 # call raspi-config non-interactively for turning on i2c correctly
+sudo raspi-config nonint set_config_var dtparam=i2c_arm on,1000000 /boot/config.txt # set i2c speed to 1MHz
 echo dtoverlay=mpu6050 | sudo tee -a /boot/config.txt # pull up device tree overlay for mpu6050
 sudo reboot
 
