@@ -61,32 +61,6 @@ float2 grad_a_W_ab(float x_i, float y_i, float x_j, float y_j){
 }
 
 
-// LINKED LIST
-// Bare minimum impl of a linked list, along with a couple helper functions, for use in the neighbors search
-
-struct linked_list_element{
-    int idx;
-    struct linked_list_element *next;
-};
-
-struct linked_list{
-    struct linked_list_element *head, *tail;
-};
-
-void append_element(struct linked_list *list, struct linked_list_element *new_element){
-    new_element->next = NULL;
-
-    if(list->head == NULL){
-        list->head = new_element;
-        list->tail = new_element;
-    }
-    else{
-        list->tail->next = new_element;
-        list->tail = new_element;
-    }
-}
-
-
 // NEIGHBORS SEARCH
 // Old and new implementations of SPH (see Monaghan 2005 and PySPH) recognize that, when the kernel has a "compact 
 //  support" (here, W_ab = 0 when euclid_dist() > some number), only a few nearby particles contribute to the particle 
@@ -101,9 +75,9 @@ struct neighbors_context{
     float x_min, x_max, y_min, y_max; // domain boundaries
     float cell_length;
     int n_cells, m_cells;
-    struct linked_list *cells;
     int n_particles;
-    struct linked_list_element *cells_elements; // unlike ordinary linked lists, the elements are together alloc'ed once
+    int *cells_head, *particles_next;   // faster linked list using memory alloc'ed once and for all
+    int *cells_tail;                    // cells_tail is for constructing the linked list
 };
 
 struct neighbors_context *alloc_neighbors_context(int n_particles, float x_min, float x_max, float y_min, 
@@ -119,12 +93,12 @@ struct neighbors_context *alloc_neighbors_context(int n_particles, float x_min, 
 
     ctx->n_cells = (int)((y_max-y_min)/cell_length)+1;
     ctx->m_cells = (int)((x_max-x_min)/cell_length)+1;
-    ctx->cells = (struct linked_list*)malloc(ctx->n_cells * ctx->m_cells * sizeof(struct linked_list));
+    ctx->cells_head = (int*)malloc(ctx->n_cells * ctx->m_cells * sizeof(int));
+    ctx->cells_tail = (int*)malloc(ctx->n_cells * ctx->m_cells * sizeof(int));
     
     ctx->n_particles = n_particles;
-    ctx->cells_elements = (struct linked_list_element*)malloc(n_particles*sizeof(struct linked_list_element));
-    for(int i = 0; i < n_particles; i++)
-        ctx->cells_elements[i] = (struct linked_list_element){ .idx = i, .next = NULL };
+    ctx->particles_next = (int*)malloc(n_particles * sizeof(int));
+    for(int i = 0; i < n_particles; i++) ctx->particles_next[i] = -1;
     
     return ctx;
 }
@@ -132,7 +106,7 @@ struct neighbors_context *alloc_neighbors_context(int n_particles, float x_min, 
 void update_neighbors_context(struct neighbors_context *ctx, struct particle *particles){
     // reset the linked lists (note that this doesn't orphan the elements)
     for(int ij_cell = 0; ij_cell < ctx->n_cells * ctx->m_cells; ij_cell++)
-        ctx->cells[ij_cell] = (struct linked_list){ .head = NULL, .tail = NULL };
+        ctx->cells_head[ij_cell] = ctx->cells_tail[ij_cell] = -1;
 
     // for each particle, infer the cell it falls in
     for(int i = 0; i < ctx->n_particles; i++){
@@ -140,7 +114,14 @@ void update_neighbors_context(struct neighbors_context *ctx, struct particle *pa
         int j_cell = (int)((particles[i].x - ctx->x_min) / ctx->cell_length);
         int ij_cell = i_cell * ctx->m_cells + j_cell;
 
-        append_element(&ctx->cells[ij_cell], &ctx->cells_elements[i]);
+        if(ctx->cells_head[ij_cell] == -1)
+            ctx->cells_head[ij_cell] = ctx->cells_tail[ij_cell] = i;
+        else{
+            int i_tail = ctx->cells_tail[ij_cell];
+            ctx->particles_next[i_tail] = i;
+            ctx->cells_tail[ij_cell] = i;
+        }
+        ctx->particles_next[i] = -1;
     }
 }
 
@@ -160,9 +141,8 @@ int find_neighbors(int *j_neighbors, struct particle *particles_a, struct partic
                 continue;
             int ij_cell = i_cell * ctx_b->m_cells + j_cell;
 
-            struct linked_list_element *current_element = ctx_b->cells[ij_cell].head;
-            while(current_element != NULL){
-                int j = current_element->idx;
+            int j = ctx_b->cells_head[ij_cell];
+            while(j != -1){
                 float distance = euclid_dist(particles_a[i].x, particles_a[i].y, particles_b[j].x, particles_b[j].y);
 
                 if(distance < 2*H && (ignore_self_interaction || i != j)){
@@ -170,7 +150,7 @@ int find_neighbors(int *j_neighbors, struct particle *particles_a, struct partic
                     neighbors_counter++;
                 }
                 
-                current_element = current_element->next;
+                j = ctx_b->particles_next[j];
             }
         }
     }
