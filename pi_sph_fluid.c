@@ -328,7 +328,7 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             
             // compute parts of the artificial pressure mentioned by Macklin 2013 (PBF) from fluid neighbors
             float W_ij = W(euclid_dist(fluid[i].x, fluid[i].y, fluid_j.x, fluid_j.y) / H);
-            float artifical_pressure_ij = -0.1*powf(W_ij/W(0.2*H), 4);
+            float artifical_pressure_ij = -0.1*powf(W_ij/W(0.2), 4);
             
             // compute parts of the viscosity from fluid neighbors
             float u_ij = fluid[i].u-fluid_j.u, v_ij = fluid[i].v-fluid_j.v;
@@ -357,7 +357,7 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             
             // compute parts of the artificial pressure mentioned by Macklin 2013 (PBF) from boundary neighbors
             float W_ij = W(euclid_dist(fluid[i].x, fluid[i].y, boundary_j.x, boundary_j.y) / H);
-            float artifical_pressure_ij = -0.1*powf(W_ij/W(0.2*H), 4);
+            float artifical_pressure_ij = -0.1*powf(W_ij/W(0.2), 4);
             
             // compute parts of the viscosity from boundary neighbors
             float u_ij = fluid[i].u-boundary_j.u, v_ij = fluid[i].v-boundary_j.v;
