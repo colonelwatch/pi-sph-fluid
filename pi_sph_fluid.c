@@ -403,9 +403,9 @@ void draw_metaballs(unsigned char *draw_buffer, struct particle *pixel_pseudopar
 
                 float d = euclid_dist(pixel_pseudoparticles[ij].x, pixel_pseudoparticles[ij].y, fluid_j.x, fluid_j.y);
 
-                // for now, using the SPH kernel (not normalized) as the Gaussian-like function suggested by Blinn
-                float unnormalizing_factor = (4*M_PI*H*H)/7;
-                metaball_condition += unnormalizing_factor*W(d/H);
+                // The max possible distance from a pixel pseudoparticle is px_width/2
+                const float px_width = WIDTH/128;
+                metaball_condition += W(d/H) / W(px_width/2/H);
 
                 if(metaball_condition >= 1) break; // no need to keep adding contributions
             }
