@@ -34,8 +34,7 @@ typedef struct { float x, y; } float2; // Helper struct for returning two floats
 
 
 // THE KERNEL AND ITS DERIVATIVE
-// Helper functions for calculating the kernel used in SPH to approximate the integral interpolant (in conjunction with 
-//  the particle approximation) along with its derivative, using the coordinates of particles a and b as arguments
+// Helper functions for kernel and its derivative, using the coordinates of particles i and j as arguments
 // Ex: W_ab = W( euclid_dist() / H )    and    grad_a W_ab = ( dW_dq() * dq_dx_a(), dW_dq() * dq_dy_a() )
 
 float euclid_dist(float x_i, float y_i, float x_j, float y_j){
@@ -63,14 +62,12 @@ float2 grad_a_W_ab(float x_i, float y_i, float x_j, float y_j){
 
 
 // NEIGHBORS SEARCH
-// Old and new implementations of SPH (see Monaghan 2005 and PySPH) recognize that, when the kernel has a "compact 
-//  support" (here, W_ab = 0 when euclid_dist() > some number), only a few nearby particles contribute to the particle 
-//  approximation of the integral interpolant. This obviously means less operations to do, but implementations 
-//  also recognize that finding these nearby particles in the first place could be done more efficiently.
-// Here we'll use the linked-list method (mentions in Monaghan 1994 and PySPH). Our kernel's support is a circle of 
-//  radius 2*H. Therefore, if a particle falls in some cell of a grid of length 2*H, all possible neighbors are in that 
-//  cell and neighboring cells. For each cell, an associated linked list holds the indices of the particles that fall 
-//  in it.
+// Domínguez 2011 and Ramachandran 2021 (PySPH paper) recognize that, when the kernel has a "compact support" (here, 
+//  W_ij = 0 when euclid_dist() > some number), only a few nearby particles contribute. This obviously means less 
+//  operations to do, but they also recognize that finding these particles in the first place could be faster.
+// Here we'll use cell linked-lists. Our kernel's support is a circle of radius 2*H. Therefore, if a particle falls in 
+//  some cell of a grid of length 2*H, all possible neighbors are in that cell and neighboring cells. For each cell, an 
+//  associated linked list holds the indices of the particles that fall in it.
 
 struct neighbors_context{
     float x_min, x_max, y_min, y_max; // domain boundaries
@@ -99,8 +96,6 @@ struct neighbors_context *alloc_neighbors_context(int n_particles, float x_min, 
     
     ctx->n_particles = n_particles;
     ctx->particles_next = (unsigned short*)malloc(n_particles * sizeof(unsigned short));
-    for(int i = 0; i < n_particles; i++)
-        ctx->particles_next[i] = USHRT_MAX; // we'll use USHRT_MAX to indicate the end of a linked list
     
     return ctx;
 }
@@ -108,7 +103,7 @@ struct neighbors_context *alloc_neighbors_context(int n_particles, float x_min, 
 void update_neighbors_context(struct neighbors_context *ctx, struct particle *particles){
     // reset the linked lists (note that this doesn't orphan the elements)
     for(int ij_cell = 0; ij_cell < ctx->n_cells * ctx->m_cells; ij_cell++)
-        ctx->cells_head[ij_cell] = ctx->cells_tail[ij_cell] = USHRT_MAX;
+        ctx->cells_head[ij_cell] = ctx->cells_tail[ij_cell] = USHRT_MAX; // USHRT_MAX is used like NULL here
 
     // for each particle, infer the cell it falls in
     for(int i = 0; i < ctx->n_particles; i++){
@@ -141,18 +136,14 @@ int find_neighbors(int *j_neighbors, struct particle *particles_a, struct partic
         for(int j_cell = j_cell_center-1; j_cell <= j_cell_center+1; j_cell++){
             if(i_cell < 0 || i_cell >= ctx_b->n_cells || j_cell < 0 || j_cell >= ctx_b->m_cells)
                 continue;
+
             int ij_cell = i_cell * ctx_b->m_cells + j_cell;
-
-            unsigned short j = ctx_b->cells_head[ij_cell];
-            while(j != USHRT_MAX){
+            for(unsigned short j = ctx_b->cells_head[ij_cell]; j != USHRT_MAX; j = ctx_b->particles_next[j]){
                 float distance = euclid_dist(particles_a[i].x, particles_a[i].y, particles_b[j].x, particles_b[j].y);
-
                 if(distance < 2*H && (ignore_self_interaction || i != j)){
                     j_neighbors[neighbors_counter] = j;
                     neighbors_counter++;
                 }
-                
-                j = ctx_b->particles_next[j];
             }
         }
     }
@@ -240,7 +231,7 @@ float2 sph_gradient(float *quantity, struct particle particle_i, struct particle
 
 
 // MAIN FUNCTIONS
-// These functions are responsible for principal parts of the fluid simulation. Heavily based on Monaghan 1994.
+// These functions are responsible for principal parts of the fluid simulation.
 
 // To start, arrange the SPH particles as a circle in the middle of the domain
 int in_initial_shape(float x, float y){
@@ -302,7 +293,7 @@ void calculate_particle_pressure(struct particle *particles, int n_particles){
     for(int i = 0; i < n_particles; i++){
         const float B = C*C*RHO_0/7;
         float pressure_i = B * (powf(particles[i].rho/RHO_0, 7) - 1);
-        particles[i].p = (pressure_i > 0)? pressure_i : 0;
+        particles[i].p = (pressure_i > 0)? pressure_i : 0; // clamping pressure at zero (this is a hack)
     }
 }
 
@@ -599,7 +590,7 @@ int main(){
 
 
     // alloc neighbors search context
-    const float x_min = 0-R, x_max = WIDTH+R, y_min = 0-R, y_max = HEIGHT+R;
+    const float x_min = 0, x_max = WIDTH, y_min = 0, y_max = HEIGHT;
     struct neighbors_context *ctx_fluid  = alloc_neighbors_context(n_fluid, x_min, x_max, y_min, y_max, 2*H), 
                              *ctx_boundary = alloc_neighbors_context(n_boundary, x_min, x_max, y_min, y_max, 2*H);
 
