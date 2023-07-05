@@ -55,7 +55,7 @@ Besides the ssd1306 driver, this project is just under 750 lines of C! Here's wh
 5. Rendering using metaballs, following the original implementation in [8]
 6. OpenMP acceleration
 
-Expect a writeup on this or even some cleaning up, but the following equations implemented.
+To be exact: expect a writeup on this or even some cleaning up, but the following equations are implemented.
 
 ### Wendland C2
 
