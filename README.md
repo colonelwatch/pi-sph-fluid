@@ -55,68 +55,112 @@ Besides the ssd1306 driver, this project is just under 750 lines of C! Here's wh
 5. Rendering using metaballs, following the original implementation in [8]
 6. OpenMP acceleration
 
-Expect a writeup on this or even some cleaning up, but the exact equations implemented are:
+Expect a writeup on this or even some cleaning up, but the following equations implemented.
 
-* Given two-dimensional coordinates written as $\vec{x}_i = (x_i, y_i)$, the two-dimensional Wendland C2 kernel found in [9]:
+### Wendland C2
 
-    $$W(\vec{x}_i - \vec{x}_j, h) = \frac{7}{4 \pi h^2} (1 - 0.5 q)^4 (1 + 2 q)$$
-    $$\frac{d W}{d q} = \frac{7}{4 \pi h^2} (-5 q) (1 - 0.5 q)^3$$
+Given two-dimensional coordinates written as $\vec{x}_i = (x_i, y_i)$, the two-dimensional Wendland C2 kernel found in [9]:
 
-    where $q = \left\Vert \vec{x}_i - \vec{x}_j \right\Vert / h$, and the derivatives $dW/dx_i$ and $dW/dy_i$ found by the chain rule
+```math
+W(\vec{x}_i - \vec{x}_j, h) = \frac{7}{4 \pi h^2} (1 - 0.5 q)^4 (1 + 2 q)
+```
 
-    $$\frac{dW}{dx_i} = \frac{dW}{dq} \frac{dq}{dx_i} = \frac{x_i - x_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h}$$
-    $$\frac{dW}{dy_i} = \frac{dW}{dq} \frac{dq}{dy_i} = \frac{y_i - y_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h}$$
-    
-    * $W(\vec{x}_i - \vec{x}_j, h)$ is typically rewritten as $W_{i j}$
-    
-    * The typical expression of the gradient can be rewritten in terms of the above as
+```math
+\frac{d W}{d q} = \frac{7}{4 \pi h^2} (-5 q) (1 - 0.5 q)^3
+```
 
-    $$\nabla_i W_{i j} = \left( \frac{d W}{d x_i} , \frac{d W}{d y_i} \right)$$
+where $q = \left\Vert \vec{x}_i - \vec{x}_j \right\Vert / h$, and the derivatives $dW/dx_i$ and $dW/dy_i$ found by the chain rule
 
-* Boundary using a rigid particles, the pseudo-mass of which is defined in [7]:
+```math
+\frac{dW}{dx_i} = \frac{dW}{dq} \frac{dq}{dx_i} = \frac{x_i - x_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h}
+```
 
-    $$\psi_{b_i} = \frac{\rho_0}{\sum_{b_j} W_{b_i b_j}}$$
+```math
+\frac{dW}{dy_i} = \frac{dW}{dq} \frac{dq}{dy_i} = \frac{y_i - y_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h}
+```
 
-    where $\rho_0 = 1000$ is the reference fluid density
+Also note:
+* $`W(\vec{x}_i - \vec{x}_j, h)`$ is typically rewritten as $`W_{i j}`$
+* The typical expression of the gradient can be rewritten in terms of the above as
 
-* Fluid density with rigid correction in [7], plus a small number (arbitrarily used the density of air) as a hack:
+```math
+\nabla_i W_{i j} = \left( \frac{d W}{d x_i} , \frac{d W}{d y_i} \right)
+```
 
-    $$\rho_{f_i} = 1.293+\sum_{f_j} m_{f_j} W_{f_i f_j} + \sum_{b_j} \psi_{b_j} W_{f_i b_j}$$
+### Boundary using rigid particles
 
-* WCSPH explicit pressure, stated first in the context of fluid simulation with SPH in [2], plus the clamping at zero (as employed in incompressible SPH formulations in [4, 5]) used as a hack:
+The pseudo-mass of which is defined in [7]:
 
-    $$p_{f_i} = \begin{cases} \frac{c_0^2 \rho_0}{7} \left( \left( \frac{\rho_{f_i}}{\rho_0} \right)^2 - 1 \right) & \rho_{f_i} > \rho_0 \\ 0 & \rho_{f_i} \leq \rho_0 \end{cases}$$
+```math
+\psi_{b_i} = \frac{\rho_0}{\sum_{b_j} W_{b_i b_j}}
+```
 
-    where $c_0 = 200$ is the numerical speed of sound (see [2] or [3]) and $\rho_0 = 1000$ is the reference fluid density
+where $\rho_0 = 1000$ is the reference fluid density
 
-* Acceleration, including momentum-preserving pressure gradient from [2], artificial viscosity from [2], and artificial pressure from [6], and rigid correction from [7]:
+### Fluid density with rigid correction
 
-    $$\begin{align*} \frac{d \vec{v}_i}{dt} & = - \sum_{f_j} m_{f_j} \left( \frac{p_{f_i}}{\rho_{f_i}^2} + \frac{p_{f_j}}{\rho_{f_j}^2} + \Pi_{{f_i} {f_j}} + s_{f_i f_j} \right) \nabla_{f_i} W_{f_i f_j} \\ & \qquad -\sum_{b_j} \psi_{b_j} \left( \frac{p_{f_i}}{\rho_{f_i}^2} + \Pi_{f_i b_j} + s_{f_i b_j} \right) \nabla_{f_i} W_{f_i b_j} \\ & \qquad + \vec{g} \end{align*}$$
+Found in [7], plus a small number (arbitrarily used the density of air) as a hack:
 
-    where $\vec{g}$ is gravitational acceleration, and the artificial viscosities (original and corrected) being
+```math
+\rho_{f_i} = 1.293+\sum_{f_j} m_{f_j} W_{f_i f_j} + \sum_{b_j} \psi_{b_j} W_{f_i b_j}
+```
 
-    $$\Pi_{f_i f_j} = -\frac{\alpha c_0}{\bar{\rho}_{f_i f_j}} \frac{h \, \vec{x}_{f_i f_j} \cdot \vec{v}_{f_i f_j}}{\left\Vert \vec{x}_{f_i f_j} \right\Vert^2 + \epsilon h^2}$$
-    $$\Pi_{f_i b_j} = -\frac{\alpha c_0}{\rho_{f_i}} \frac{h \, \vec{x}_{f_i b_j} \cdot \vec{v}_{f_i b_j}}{\left\Vert \vec{x}_{f_i b_j} \right\Vert^2 + \epsilon h^2}$$
+### WCSPH explicit pressure
 
-    where $\alpha=0.01$ and $\epsilon=0.01$, and the artifical pressure being
+Stated first in the context of fluid simulation with SPH in [2], plus the clamping at zero (as employed in incompressible SPH formulations in [4, 5]) used as a hack:
 
-    $$s_{i j} = k_1 \left( \frac{W_{i j}}{W(k_2 h \, \vec{e})} \right)^4$$
+```math
+p_{f_i} = \begin{cases} \frac{c_0^2 \rho_0}{7} \left( \left( \frac{\rho_{f_i}}{\rho_0} \right)^2 - 1 \right) & \rho_{f_i} > \rho_0 \\\\ 0 & \rho_{f_i} \leq \rho_0 \end{cases}
+```
 
-    where $k_1 = 0.1$, $k_2 = 0.2$, and $\vec{e}$ is just a unit-length vector
+where $c_0 = 200$ is the numerical speed of sound (see [2] or [3]) and $\rho_0 = 1000$ is the reference fluid density
 
-    * The mean rho is written as $\bar\rho_{f_i f_j} = (\rho_{f_i} + \rho_{f_j})/2$
-    * The position difference is written as $\vec{x}_{i j} = \vec{x}_i - \vec{x}_j$
-    * The velocity difference is written as $\vec{v}_{i j} = \vec{v}_i - \vec{v}_j$
+### Acceleration
 
-* Given $\vec{x}_{p_i}$ is the center of a pixel and $\Delta x_p$ is the width of a pixel in the domain, metaballs rendering:
+Including momentum-preserving pressure gradient from [2], artificial viscosity from [2], and artificial pressure from [6], and rigid correction from [7]:
 
-    $$g(\vec{x}_{p_i}) = \sum_{f_j} \frac{W_{p_i f_j}}{W(0.5 \, \Delta x_p \,\, \vec{e})}$$
+```math
+\begin{align*} \frac{d \vec{v}_i}{dt} & = - \sum_{f_j} m_{f_j} \left( \frac{p_{f_i}}{\rho_{f_i}^2} + \frac{p_{f_j}}{\rho_{f_j}^2} + \Pi_{{f_i} {f_j}} + s_{f_i f_j} \right) \nabla_{f_i} W_{f_i f_j} \\ & \qquad -\sum_{b_j} \psi_{b_j} \left( \frac{p_{f_i}}{\rho_{f_i}^2} + \Pi_{f_i b_j} + s_{f_i b_j} \right) \nabla_{f_i} W_{f_i b_j} \\ & \qquad + \vec{g} \end{align*}
+```
 
-    where $\vec{e}$ is just a unit length vector and pixel $p_i$ should light up if $g(\vec{x}_{p_i}) \geq 1$
+where $\vec{g}$ is gravitational acceleration, and the artificial viscosities (original and corrected) being
 
-* Leapfrog integration:
+```math
+\Pi_{f_i f_j} = -\frac{\alpha c_0}{\bar{\rho}_{f_i f_j}} \frac{h \, \vec{x}_{f_i f_j} \cdot \vec{v}_{f_i f_j}}{\left\Vert \vec{x}_{f_i f_j} \right\Vert^2 + \epsilon h^2}
+```
 
-    $$\begin{align*} \vec{v}_{i+1/2} & = v_i + 0.5 \, \Delta t \left. \frac{d \vec{v}}{d t} \right\rvert_{x_i} \\ \vec{x}_{i+1} & = x_i + \Delta t \, \vec{v}_{i + 1/2} \\ \vec{v}_{i+1} & = v_{i+1/2} + 0.5 \, \Delta t \left. \frac{d \vec{v}}{d t} \right\rvert_{x_{i+1}} \end{align*}$$
+```math
+\Pi_{f_i b_j} = -\frac{\alpha c_0}{\rho_{f_i}} \frac{h \, \vec{x}_{f_i b_j} \cdot \vec{v}_{f_i b_j}}{\left\Vert \vec{x}_{f_i b_j} \right\Vert^2 + \epsilon h^2}
+```
+
+where $\alpha=0.01$ and $\epsilon=0.01$, and the artifical pressure being
+
+```math
+s_{i j} = k_1 \left( \frac{W_{i j}}{W(k_2 h \, \vec{e})} \right)^4
+```
+
+where $k_1 = 0.1$, $k_2 = 0.2$, and $\vec{e}$ is just a unit-length vector
+
+Also note:
+* The mean rho is written as $\bar\rho_{f_i f_j} = (\rho_{f_i} + \rho_{f_j})/2$
+* The position difference is written as $\vec{x}_{i j} = \vec{x}_i - \vec{x}_j$
+* The velocity difference is written as $\vec{v}_{i j} = \vec{v}_i - \vec{v}_j$
+
+### Metaballs rendering
+
+Given $\vec{x}_{p_i}$ is the center of a pixel and $\Delta x_p$ is the width of a pixel in the domain, metaballs rendering:
+
+```math
+g(\vec{x}_{p_i}) = \sum_{f_j} \frac{W_{p_i f_j}}{W(0.5 \, \Delta x_p \,\, \vec{e})}
+```
+
+where $\vec{e}$ is just a unit length vector and pixel $p_i$ should light up if $g(\vec{x}_{p_i}) \geq 1$
+
+### Leapfrog integration
+
+```math
+\begin{align*} \vec{v}_{i+1/2} & = v_i + 0.5 \, \Delta t \left. \frac{d \vec{v}}{d t} \right\rvert_{x_i} \\ \vec{x}_{i+1} & = x_i + \Delta t \, \vec{v}_{i + 1/2} \\ \vec{v}_{i+1} & = v_{i+1/2} + 0.5 \, \Delta t \left. \frac{d \vec{v}}{d t} \right\rvert_{x_{i+1}} \end{align*}
+```
 
 ## What's not implemented?
 
