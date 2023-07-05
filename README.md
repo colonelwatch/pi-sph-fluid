@@ -72,11 +72,11 @@ W(\vec{x}_i - \vec{x}_j, h) = \frac{7}{4 \pi h^2} (1 - 0.5 q)^4 (1 + 2 q)
 where $q = \left\Vert \vec{x}_i - \vec{x}_j \right\Vert / h$, and the derivatives $dW/dx_i$ and $dW/dy_i$ found by the chain rule
 
 ```math
-\frac{dW}{dx_i} = \frac{dW}{dq} \frac{dq}{dx_i} = \frac{x_i - x_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h}
+\frac{dW}{dx_i} = \frac{dW}{dq} \frac{dq}{dx_i} = (\frac{dW}{dq}) (\frac{x_i - x_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h})
 ```
 
 ```math
-\frac{dW}{dy_i} = \frac{dW}{dq} \frac{dq}{dy_i} = \frac{y_i - y_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h}
+\frac{dW}{dy_i} = \frac{dW}{dq} \frac{dq}{dy_i} = (\frac{dW}{dq}) (\frac{y_i - y_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h})
 ```
 
 Also note:
