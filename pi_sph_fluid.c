@@ -337,7 +337,7 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             float xy_dot_xy = x_ij*x_ij+y_ij*y_ij;
             float mu_ij = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
             float mean_rho = (fluid[i].rho+fluid_j.rho)/2;
-            float viscosity_ij = 0.01*C*mu_ij/mean_rho;
+            float viscosity_ij = (xy_dot_uv < 0)? 0.01*C*mu_ij/mean_rho : 0;
 
             temp_i[k] = pressure_ij+artifical_pressure_ij+viscosity_ij;
         }
@@ -365,7 +365,7 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             float xy_dot_uv = x_ij*u_ij+y_ij*v_ij;
             float xy_dot_xy = x_ij*x_ij+y_ij*y_ij;
             float mu_ij = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
-            float viscosity_ij = 0.01*C*mu_ij/fluid[i].rho; // use fluid density only, not the mean density
+            float viscosity_ij = (xy_dot_uv < 0)? 0.01*C*mu_ij/fluid[i].rho : 0; // use fluid density only
 
             temp_i[k] = pressure_ij+artifical_pressure_ij+viscosity_ij;
         }
