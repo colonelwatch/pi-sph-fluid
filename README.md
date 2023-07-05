@@ -110,7 +110,7 @@ Found in [7], plus a small number (arbitrarily used the density of air) as a hac
 Stated first in the context of fluid simulation with SPH in [2], plus the clamping at zero (as employed in incompressible SPH formulations in [4, 5]) used as a hack:
 
 ```math
-p_{f_i} = \begin{cases} \frac{c_0^2 \rho_0}{7} \left( \left( \frac{\rho_{f_i}}{\rho_0} \right)^2 - 1 \right) & \rho_{f_i} > \rho_0 \\\\ 0 & \rho_{f_i} \leq \rho_0 \end{cases}
+p_{f_i} = \begin{cases} \frac{c_0^2 \rho_0}{7} \left( \left( \frac{\rho_{f_i}}{\rho_0} \right)^2 - 1 \right) & \rho_{f_i} > \rho_0 \\ 0 & \rho_{f_i} \leq \rho_0 \end{cases}
 ```
 
 where $c_0 = 200$ is the numerical speed of sound (see [2] or [3]) and $\rho_0 = 1000$ is the reference fluid density
