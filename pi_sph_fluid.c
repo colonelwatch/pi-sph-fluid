@@ -324,11 +324,11 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             struct particle fluid_j = particle_at(&neighbors, k);
 
             // compute parts of the momentum-conserving pressure from fluid neighbors
-            float pressure_ij = -(fluid[i].p/(fluid[i].rho*fluid[i].rho) + fluid_j.p/(fluid_j.rho*fluid_j.rho));
+            float pressure_ij = (fluid[i].p/(fluid[i].rho*fluid[i].rho) + fluid_j.p/(fluid_j.rho*fluid_j.rho));
             
             // compute parts of the artificial pressure mentioned by Macklin 2013 (PBF) from fluid neighbors
             float W_ij = W(euclid_dist(fluid[i].x, fluid[i].y, fluid_j.x, fluid_j.y) / H);
-            float artifical_pressure_ij = -0.1*powf(W_ij/W(0.2), 4);
+            float artifical_pressure_ij = 0.1*powf(W_ij/W(0.2), 4);
             
             // compute parts of the viscosity from fluid neighbors
             float u_ij = fluid[i].u-fluid_j.u, v_ij = fluid[i].v-fluid_j.v;
@@ -337,13 +337,13 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             float xy_dot_xy = x_ij*x_ij+y_ij*y_ij;
             float mu_ij = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
             float mean_rho = (fluid[i].rho+fluid_j.rho)/2;
-            float viscosity_ij = (xy_dot_uv < 0)? 0.01*C*mu_ij/mean_rho : 0;
+            float viscosity_ij = (xy_dot_uv < 0)? -0.01*C*mu_ij/mean_rho : 0;
 
             temp_i[k] = pressure_ij+artifical_pressure_ij+viscosity_ij;
         }
 
-        // compute the acceleration due to fluid neighbors
-        float2 acc_fluid_fluid_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
+        // compute the sum from fluid neighbors
+        float2 sum_fluid_fluid_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
 
         // get the boundary neighbors of fluid[i]
         n_neighbors = find_neighbors(j_neighbors, fluid, boundary, i, ctx_boundary);
@@ -353,11 +353,11 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             struct particle boundary_j = particle_at(&neighbors, k);
 
             // compute parts of the momentum-conserving pressure from boundary neighbors
-            float pressure_ij = -fluid[i].p/(fluid[i].rho*fluid[i].rho);
+            float pressure_ij = fluid[i].p/(fluid[i].rho*fluid[i].rho);
             
             // compute parts of the artificial pressure mentioned by Macklin 2013 (PBF) from boundary neighbors
             float W_ij = W(euclid_dist(fluid[i].x, fluid[i].y, boundary_j.x, boundary_j.y) / H);
-            float artifical_pressure_ij = -0.1*powf(W_ij/W(0.2), 4);
+            float artifical_pressure_ij = 0.1*powf(W_ij/W(0.2), 4);
             
             // compute parts of the viscosity from boundary neighbors
             float u_ij = fluid[i].u-boundary_j.u, v_ij = fluid[i].v-boundary_j.v;
@@ -365,16 +365,16 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             float xy_dot_uv = x_ij*u_ij+y_ij*v_ij;
             float xy_dot_xy = x_ij*x_ij+y_ij*y_ij;
             float mu_ij = H*xy_dot_uv/(xy_dot_xy+0.01*H*H);
-            float viscosity_ij = (xy_dot_uv < 0)? 0.01*C*mu_ij/fluid[i].rho : 0; // use fluid density only
+            float viscosity_ij = (xy_dot_uv < 0)? -0.01*C*mu_ij/fluid[i].rho : 0; // use fluid density only
 
             temp_i[k] = pressure_ij+artifical_pressure_ij+viscosity_ij;
         }
 
-        // compute the acceleration due to boundary neighbors
-        float2 acc_fluid_boundary_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
+        // compute the sum from boundary neighbors
+        float2 sum_fluid_boundary_i = sph_gradient(temp_i, fluid[i], &neighbors, MASS);
 
-        du_dt_fluid[i] = gravity_x+acc_fluid_fluid_i.x+acc_fluid_boundary_i.x;
-        dv_dt_fluid[i] = gravity_y+acc_fluid_fluid_i.y+acc_fluid_boundary_i.y;
+        du_dt_fluid[i] = gravity_x-sum_fluid_fluid_i.x-sum_fluid_boundary_i.x;
+        dv_dt_fluid[i] = gravity_y-sum_fluid_fluid_i.y-sum_fluid_boundary_i.y;
     }
 }
 
