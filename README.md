@@ -72,11 +72,11 @@ W(\vec{x}_i - \vec{x}_j, h) = \frac{7}{4 \pi h^2} (1 - 0.5 q)^4 (1 + 2 q)
 where $q = \left\Vert \vec{x}_i - \vec{x}_j \right\Vert / h$, and the derivatives $dW/dx_i$ and $dW/dy_i$ found by the chain rule
 
 ```math
-\frac{dW}{dx_i} = \frac{dW}{dq} \frac{dq}{dx_i} = (\frac{dW}{dq}) (\frac{x_i - x_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h})
+\frac{dW}{dx_i} = \frac{dW}{dq} \frac{dq}{dx_i} = \left( \frac{dW}{dq} \right) \left( \frac{x_i - x_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h} \right)
 ```
 
 ```math
-\frac{dW}{dy_i} = \frac{dW}{dq} \frac{dq}{dy_i} = (\frac{dW}{dq}) (\frac{y_i - y_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h})
+\frac{dW}{dy_i} = \frac{dW}{dq} \frac{dq}{dy_i} = \left( \frac{dW}{dq} \right) \left( \frac{y_i - y_j}{\left\Vert \vec{x}_i - \vec{x}_j \right\Vert h} \right)
 ```
 
 Also note:
@@ -102,7 +102,7 @@ where $\rho_0 = 1000$ is the reference fluid density
 Found in [7]:
 
 ```math
-\rho_{f_i} = m_{f_i} W(\vec{0}) + \sum_{f_j} m_{f_j} W_{f_i f_j} + \sum_{b_j} \psi_{b_j} W_{f_i b_j}
+\rho_{f_i} = m_{f_i} W ( \vec{0} ) + \sum_{f_j} m_{f_j} W_{f_i f_j} + \sum_{b_j} \psi_{b_j} W_{f_i b_j}
 ```
 
 Also note:
@@ -116,10 +116,10 @@ Also note:
 Stated first in the context of fluid simulation with SPH in [2], plus the clamping at zero (as employed in incompressible SPH formulations in [4, 5]) used as a hack:
 
 ```math
-p_{f_i} = \begin{cases} \frac{c_0^2 \rho_0}{7} \left( \left( \frac{\rho_{f_i}}{\rho_0} \right)^2 - 1 \right) & \rho_{f_i} > \rho_0 \\ 0 & \rho_{f_i} \leq \rho_0 \end{cases}
+p_{f_i} = \begin{cases} \frac{c_0^2 \rho_0}{7} \left( \left( \frac{\rho_{f_i}}{\rho_0} \right)^7 - 1 \right) & \rho_{f_i} > \rho_0 \\ 0 & \rho_{f_i} \leq \rho_0 \end{cases}
 ```
 
-where $c_0 = 200$ is the numerical speed of sound (see [2] or [3]) and $\rho_0 = 1000$ is the reference fluid density
+where $c_0 = 400$ is the numerical speed of sound (see [2] or [3]) and $\rho_0 = 1000$ is the reference fluid density
 
 ### Acceleration
 
@@ -132,11 +132,11 @@ Including momentum-preserving pressure gradient from [2], artificial viscosity f
 where $\vec{g}$ is gravitational acceleration, and the artificial viscosities (original and corrected) being
 
 ```math
-\Pi_{f_i f_j} = -\frac{\alpha c_0}{\bar{\rho}_{f_i f_j}} \frac{h \, \vec{x}_{f_i f_j} \cdot \vec{v}_{f_i f_j}}{\left\Vert \vec{x}_{f_i f_j} \right\Vert^2 + \epsilon h^2}
+\Pi_{f_i f_j} = \begin{cases} -\frac{\alpha c_0}{\bar{\rho}_{f_i f_j}} \frac{h \, \vec{x}_{f_i f_j} \cdot \vec{v}_{f_i f_j}}{\left\Vert \vec{x}_{f_i f_j} \right\Vert^2 + \epsilon h^2} & \vec{x}_{f_i f_j} \cdot \vec{v}_{f_i f_j} \leq 0 \\ 0 & \vec{x}_{f_i f_j} \cdot \vec{v}_{f_i f_j} > 0 \end{cases}
 ```
 
 ```math
-\Pi_{f_i b_j} = -\frac{\alpha c_0}{\rho_{f_i}} \frac{h \, \vec{x}_{f_i b_j} \cdot \vec{v}_{f_i b_j}}{\left\Vert \vec{x}_{f_i b_j} \right\Vert^2 + \epsilon h^2}
+\Pi_{f_i b_j} = \begin{cases} -\frac{\alpha c_0}{\rho_{f_i}} \frac{h \, \vec{x}_{f_i b_j} \cdot \vec{v}_{f_i b_j}}{\left\Vert \vec{x}_{f_i b_j} \right\Vert^2 + \epsilon h^2} & \vec{x}_{f_i b_j} \cdot \vec{v}_{f_i b_j} \leq 0 \\ 0 & \vec{x}_{f_i b_j} \cdot \vec{v}_{f_i b_j} > 0 \end{cases}
 ```
 
 where $\alpha=0.01$ and $\epsilon=0.01$, and the artifical pressure being
@@ -165,7 +165,7 @@ where $\vec{e}$ is just a unit length vector and pixel $p_i$ should light up if 
 ### Leapfrog integration
 
 ```math
-\begin{align*} \vec{v}_{i+1/2} & = v_i + 0.5 \, \Delta t \left. \frac{d \vec{v}}{d t} \right\rvert_{x_i} \\ \vec{x}_{i+1} & = x_i + \Delta t \, \vec{v}_{i + 1/2} \\ \vec{v}_{i+1} & = v_{i+1/2} + 0.5 \, \Delta t \left. \frac{d \vec{v}}{d t} \right\rvert_{x_{i+1}} \end{align*}
+\begin{align*} \vec{v}_{i+1/2} & = v_i + 0.5 \, \Delta t \left. \frac{d \vec{v}}{d t} \right\rvert_{\vec{x}_i} \\ \vec{x}_{i+1} & = x_i + \Delta t \, \vec{v}_{i + 1/2} \\ \vec{v}_{i+1} & = v_{i+1/2} + 0.5 \, \Delta t \left. \frac{d \vec{v}}{d t} \right\rvert_{\vec{x}_{i+1}} \end{align*}
 ```
 
 ## What's not implemented?
@@ -178,7 +178,7 @@ This project really sits on the ground floor of SPH, and some next steps include
     * This would add a bit more realism to the fluid simulation
 3. GPU acceleration or an implementation of one of the incompressible schemes (PCISPH, IISPH, DFSPH, PBF, etc)
     * There's a failed attempt at IISPH in the `IISPH` branch
-    * Some of the most interesting fluid phenomena don't arise in the small number of particles that CPU WCSPH can handle without going unstable (currently 650)
+    * Some of the most interesting fluid phenomena don't arise in the small number of particles that CPU WCSPH can handle without going unstable (currently 431)
 
 ## References
 
