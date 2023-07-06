@@ -8,16 +8,16 @@
 #include <ssd1306.h>
 
 #define REALTIME         // comment out to stop enforcing real-time simulation speed (useful for benchmarking)
-#define R 0.0600f        // m, initial spacing (real ticks/s is O(R^3), but DT is O(R), so realtime implies intersect)
+#define R 0.0750f        // m, initial spacing (real ticks/s is O(R^3), but DT is O(R), so realtime implies intersect)
 #define H (R*1.3f)       // m, smoothing length
 #define WIDTH 4.0f       // m, width of domain
 #define HEIGHT 2.0f      // m, height of domain
 #define RHO_0 1000.0f    // kg/m^3, reference density
-#define C 200.0f         // m/s, "numerical" speed of sound (10*max_speed for correct WCSPH)
+#define C 400.0f         // m/s, "numerical" speed of sound (10*max_speed for correct WCSPH)
 #define G 9.81f          // m/s^2, gravitational acceleration
 
 #define DT (1.0f*H/C)    // s, time step (CFL condition is DT <= 0.4*H/C? But using 1.0 seems to work fine)
-#define V (0.83*H*H)     // m^3, volume of each fluid particle
+#define V (0.57f*H*H)     // m^3, volume of each fluid particle
 #define MAX_POSSIBLE_NEIGHBORS 48 // the sum of the first three hexagonal numbers is 22, so this should be enough
 
 
@@ -270,6 +270,9 @@ void calculate_density(struct particle *fluid, struct particle *boundary, struct
 
     #pragma omp for
     for(int i = 0; i < ctx_fluid->n_particles; i++){
+        const float W_ii = W(0);
+        float self_density = fluid[i].m * W_ii; // density is neighbors PLUS self
+        
         // fluid contribution to density of fluid
         n_neighbors = find_neighbors(j_neighbors, fluid, fluid, i, ctx_fluid);
         read_neighbors(fluid, j_neighbors, n_neighbors, &neighbors);
@@ -280,8 +283,7 @@ void calculate_density(struct particle *fluid, struct particle *boundary, struct
         read_neighbors(boundary, j_neighbors, n_neighbors, &neighbors);
         float density_fluid_boundary = sph(ones, fluid[i], &neighbors, MASS);
 
-        // 1.293 is the density of air (adding it here seemed to prevent instability after a couple minutes)
-        fluid[i].rho = 1.293+density_fluid_fluid+density_fluid_boundary;
+        fluid[i].rho = self_density+density_fluid_fluid+density_fluid_boundary;
     }
 }
 

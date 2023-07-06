@@ -99,11 +99,17 @@ where $\rho_0 = 1000$ is the reference fluid density
 
 ### Fluid density with rigid correction
 
-Found in [7], plus a small number (arbitrarily used the density of air) as a hack:
+Found in [7]:
 
 ```math
-\rho_{f_i} = 1.293+\sum_{f_j} m_{f_j} W_{f_i f_j} + \sum_{b_j} \psi_{b_j} W_{f_i b_j}
+\rho_{f_i} = m_{f_i} W(\vec{0}) + \sum_{f_j} m_{f_j} W_{f_i f_j} + \sum_{b_j} \psi_{b_j} W_{f_i b_j}
 ```
+
+Also note:
+* Calculating the density seems to be the one exception where a particle can neighbor itself (see [calculation of density in SPlisHSPlasH](https://github.com/InteractiveComputerGraphics/SPlisHSPlasH/blob/a081124afab372a90c1d1848d4b85ea58b8dcadb/SPlisHSPlasH/TimeStep.cpp#L162-L171))
+    * However, a particle doesn't seem to neighbor itself in the general case (see the [comparison against brute-force search](https://github.com/InteractiveComputerGraphics/CompactNSearch/blob/99fa1fe052f353b33957948f36e628500f1737f7/demo/main.cpp#L66-L67) in the neighbors search library used in SPlisHSPlasH)
+* Here, the self-contribution is written out as an explicit term
+* This may or may not be the interpretation taken in [7] as well
 
 ### WCSPH explicit pressure
 
