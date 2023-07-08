@@ -62,11 +62,11 @@ To be exact: expect a writeup on this or even some cleaning up, but the followin
 Given two-dimensional coordinates written as $\vec{x}_i = (x_i, y_i)$, the two-dimensional Wendland C2 kernel found in [9]:
 
 ```math
-W(\vec{x}_i - \vec{x}_j, h) = \frac{7}{4 \pi h^2} (1 - 0.5 q)^4 (1 + 2 q)
+W(\vec{x}_i - \vec{x}_j, h) = \begin{cases} \frac{7}{4 \pi h^2} (1 - 0.5 q)^4 (1 + 2 q) & q < 2 \\ 0 & q \geq 2 \end{cases}
 ```
 
 ```math
-\frac{d W}{d q} = \frac{7}{4 \pi h^2} (-5 q) (1 - 0.5 q)^3
+\frac{d W}{d q} = \begin{cases} \frac{7}{4 \pi h^2} (-5 q) (1 - 0.5 q)^3 & q < 2 \\ 0 & q \geq 2 \end{cases}
 ```
 
 where $q = \left\Vert \vec{x}_i - \vec{x}_j \right\Vert / h$, and the derivatives $dW/dx_i$ and $dW/dy_i$ found by the chain rule
