@@ -42,8 +42,9 @@ float euclid_dist(float x_i, float y_i, float x_j, float y_j){
     return sqrtf(x_ij*x_ij+y_ij*y_ij);
 }
 
-float W(float q){
+float W(float x_i, float y_i, float x_j, float y_j){
     const float normalizing_factor = 7/(4*M_PI*H*H);
+    float q = euclid_dist(x_i, y_i, x_j, y_j)/H;
     float tmp_1 = 1-0.5f*q, tmp_2 = 1+2*q;
     return normalizing_factor*powf(tmp_1, 4)*tmp_2; // Wendland C2 kernel, though cubic spline probably also works
 }
@@ -203,7 +204,7 @@ float sph(float *quantity, struct particle particle_i, struct particle_neighbors
     for(int k = 0; k < particle_i_neighbors->count; k++){
         struct particle neighbor_j = particle_at(particle_i_neighbors, k);
 
-        float W_ij = W(euclid_dist(particle_i.x, particle_i.y, neighbor_j.x, neighbor_j.y) / H);
+        float W_ij = W(particle_i.x, particle_i.y, neighbor_j.x, neighbor_j.y);
         float leading_factor_j = (leading_factor == MASS)? neighbor_j.m : neighbor_j.m/neighbor_j.rho;
 
         sph_quantity += leading_factor_j * quantity[k] * W_ij;
@@ -252,7 +253,7 @@ void calculate_boundary_pseudomass(struct particle *boundary, struct neighbors_c
         for(int k = 0; k < n_neighbors; k++){
             struct particle boundary_j = particle_at(&neighbors, k);
             
-            recip_volume += W(euclid_dist(boundary[i].x, boundary[i].y, boundary_j.x, boundary_j.y) / H);
+            recip_volume += W(boundary[i].x, boundary[i].y, boundary_j.x, boundary_j.y);
         }
 
         boundary[i].m = boundary[i].rho / recip_volume;
@@ -270,7 +271,7 @@ void calculate_density(struct particle *fluid, struct particle *boundary, struct
 
     #pragma omp for
     for(int i = 0; i < ctx_fluid->n_particles; i++){
-        const float W_ii = W(0);
+        const float W_ii = W(0, 0, 0, 0);
         float self_density = fluid[i].m * W_ii; // density is neighbors PLUS self
         
         // fluid contribution to density of fluid
@@ -320,8 +321,8 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             float pressure_ij = (fluid[i].p/(fluid[i].rho*fluid[i].rho) + fluid_j.p/(fluid_j.rho*fluid_j.rho));
             
             // compute parts of the artificial pressure mentioned by Macklin 2013 (PBF) from fluid neighbors
-            float W_ij = W(euclid_dist(fluid[i].x, fluid[i].y, fluid_j.x, fluid_j.y) / H);
-            float artifical_pressure_ij = 0.1*powf(W_ij/W(0.2), 4);
+            float W_ij = W(fluid[i].x, fluid[i].y, fluid_j.x, fluid_j.y);
+            float artifical_pressure_ij = 0.1*powf(W_ij/W(0.2*H, 0, 0, 0), 4);
             
             // compute parts of the viscosity from fluid neighbors
             float u_ij = fluid[i].u-fluid_j.u, v_ij = fluid[i].v-fluid_j.v;
@@ -349,8 +350,8 @@ void calculate_accelerations(float *du_dt_fluid, float *dv_dt_fluid, struct part
             float pressure_ij = fluid[i].p/(fluid[i].rho*fluid[i].rho);
             
             // compute parts of the artificial pressure mentioned by Macklin 2013 (PBF) from boundary neighbors
-            float W_ij = W(euclid_dist(fluid[i].x, fluid[i].y, boundary_j.x, boundary_j.y) / H);
-            float artifical_pressure_ij = 0.1*powf(W_ij/W(0.2), 4);
+            float W_ij = W(fluid[i].x, fluid[i].y, boundary_j.x, boundary_j.y);
+            float artifical_pressure_ij = 0.1*powf(W_ij/W(0.2*H, 0, 0, 0), 4);
             
             // compute parts of the viscosity from boundary neighbors
             float u_ij = fluid[i].u-boundary_j.u, v_ij = fluid[i].v-boundary_j.v;
@@ -394,11 +395,10 @@ void draw_metaballs(unsigned char *draw_buffer, struct particle *pixel_pseudopar
             for(int k = 0; k < n_contributors; k++){
                 struct particle fluid_j = particle_at(&contributors, k);
 
-                float d = euclid_dist(pixel_pseudoparticles[ij].x, pixel_pseudoparticles[ij].y, fluid_j.x, fluid_j.y);
-
                 // The max possible distance from a pixel pseudoparticle is px_width/2
                 const float px_width = WIDTH/128;
-                metaball_condition += W(d/H) / W(px_width/2/H);
+                float W_ij = W(pixel_pseudoparticles[ij].x, pixel_pseudoparticles[ij].y, fluid_j.x, fluid_j.y);
+                metaball_condition += W_ij / W(px_width/2, 0, 0, 0);
 
                 if(metaball_condition >= 1) break; // no need to keep adding contributions
             }
